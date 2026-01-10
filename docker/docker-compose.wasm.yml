@@ -1,0 +1,41 @@
+# iOS Screen Time Screenshot Processing - WASM-only Docker Compose
+#
+# This configuration provides a 100% client-side deployment:
+# - No backend required
+# - All processing happens in the browser
+# - Uses IndexedDB for local storage
+#
+# Usage:
+#   docker-compose -f docker/docker-compose.wasm.yml up -d
+#   # Or from docker/ directory:
+#   docker-compose -f docker-compose.wasm.yml up -d
+#
+# Access:
+#   - Application: http://localhost:9000
+
+name: ios-screen-time-wasm
+
+services:
+  wasm-app:
+    build:
+      context: ..
+      dockerfile: docker/frontend/Dockerfile.wasm
+    container_name: ios-screen-time-screenshot-processing-wasm
+    ports:
+      - "9000:80"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    labels:
+      - "com.ios-screen-time-screenshot-processing.description=WASM-only iOS Screen Time Screenshot Processing (100% client-side)"
+      - "com.ios-screen-time-screenshot-processing.mode=wasm"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  default:
+    name: ios-screen-time-screenshot-processing-wasm-network

@@ -1,0 +1,6 @@
+FROM rust:latest
+RUN apt-get update && apt-get install -y libleptonica-dev libtesseract-dev tesseract-ocr pkg-config libclang-dev && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY bench_leptess/ /app/
+RUN cargo build --release
+ENTRYPOINT ["/app/target/release/bench_leptess"]

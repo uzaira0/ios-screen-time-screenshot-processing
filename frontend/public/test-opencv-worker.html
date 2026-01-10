@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenCV Worker Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        #log {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .success {
+            color: green;
+            font-weight: bold;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>OpenCV.js Web Worker Test</h1>
+    <p>This page tests if OpenCV.js loads correctly in a Web Worker environment.</p>
+
+    <button onclick="testWorker()">Test OpenCV Worker</button>
+    <button onclick="clearLog()">Clear Log</button>
+
+    <h2>Log:</h2>
+    <div id="log"></div>
+
+    <script>
+        const logDiv = document.getElementById('log');
+
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'success' ? 'success' : type === 'error' ? 'error' : '';
+            logDiv.innerHTML += `<div class="${className}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            logDiv.innerHTML = '';
+        }
+
+        function testWorker() {
+            log('Creating test worker...');
+
+            // Create inline worker for testing
+            const workerCode = `
+                console.log('[TestWorker] Worker started');
+
+                // Configure Module before loading opencv.js
+                self.Module = {
+                    locateFile: (path) => {
+                        console.log('[TestWorker] locateFile called with:', path);
+                        return path;
+                    },
+                    onRuntimeInitialized: () => {
+                        console.log('[TestWorker] OpenCV runtime initialized');
+                    }
+                };
+
+                console.log('[TestWorker] Loading opencv.js via importScripts...');
+
+                try {
+                    self.importScripts('/opencv/opencv.js');
+                    console.log('[TestWorker] importScripts completed');
+                } catch (err) {
+                    console.error('[TestWorker] importScripts failed:', err);
+                    self.postMessage({ type: 'error', message: 'importScripts failed: ' + err.message });
+                }
+
+                // Wait for cv to be available
+                function waitForOpenCV() {
+                    const startTime = Date.now();
+                    const checkInterval = setInterval(() => {
+                        if (typeof cv !== 'undefined' && cv.Mat) {
+                            clearInterval(checkInterval);
+                            console.log('[TestWorker] OpenCV is ready!');
+
+                            // Test creating a Mat
+                            try {
+                                const testMat = new cv.Mat(100, 100, cv.CV_8UC3);
+                                console.log('[TestWorker] Successfully created Mat:', testMat.rows, 'x', testMat.cols);
+                                testMat.delete();
+
+                                self.postMessage({
+                                    type: 'success',
+                                    message: 'OpenCV loaded successfully!',
+                                    version: cv.version || 'unknown',
+                                    loadTime: Date.now() - startTime
+                                });
+                            } catch (err) {
+                                console.error('[TestWorker] Mat creation failed:', err);
+                                self.postMessage({
+                                    type: 'error',
+                                    message: 'Mat creation failed: ' + err.message
+                                });
+                            }
+                            return;
+                        }
+
+                        if (Date.now() - startTime > 30000) {
+                            clearInterval(checkInterval);
+                            console.error('[TestWorker] OpenCV loading timed out');
+                            self.postMessage({
+                                type: 'error',
+                                message: 'OpenCV loading timed out after 30 seconds'
+                            });
+                        }
+                    }, 100);
+                }
+
+                waitForOpenCV();
+            `;
+
+            const blob = new Blob([workerCode], { type: 'application/javascript' });
+            const worker = new Worker(URL.createObjectURL(blob));
+
+            worker.onmessage = (e) => {
+                const { type, message, version, loadTime } = e.data;
+
+                if (type === 'success') {
+                    log(`✓ ${message}`, 'success');
+                    if (version) log(`  OpenCV version: ${version}`, 'success');
+                    if (loadTime) log(`  Load time: ${loadTime}ms`, 'success');
+                } else if (type === 'error') {
+                    log(`✗ ${message}`, 'error');
+                }
+
+                worker.terminate();
+            };
+
+            worker.onerror = (err) => {
+                log(`✗ Worker error: ${err.message}`, 'error');
+                worker.terminate();
+            };
+
+            log('Worker created, loading OpenCV...');
+        }
+
+        // Auto-run test on page load
+        setTimeout(() => {
+            log('Auto-starting test...');
+            testWorker();
+        }, 500);
+    </script>
+</body>
+</html>

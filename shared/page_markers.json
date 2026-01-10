@@ -1,0 +1,12 @@
+{
+  "_comment": "Page type detection markers. SINGLE SOURCE OF TRUTH.",
+  "daily_page_markers": [
+    "WEEK", "DAY", "MOST", "USED", "CATEGORIES",
+    "TODAY", "SHOW", "ENTERTAINMENT", "EDUCATION",
+    "INFORMATION", "READING"
+  ],
+  "app_page_markers": [
+    "INFO", "DEVELOPER", "RATING", "LIMIT",
+    "AGE", "DAILY", "AVERAGE"
+  ]
+}

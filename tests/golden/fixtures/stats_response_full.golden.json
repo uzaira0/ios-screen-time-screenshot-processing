@@ -1,0 +1,15 @@
+{
+  "auto_processed": 380,
+  "average_annotations_per_screenshot": 2.4,
+  "completed_screenshots": 400,
+  "deleted": 5,
+  "failed": 15,
+  "pending": 50,
+  "pending_screenshots": 50,
+  "screenshots_with_consensus": 350,
+  "screenshots_with_disagreements": 20,
+  "skipped": 30,
+  "total_annotations": 1200,
+  "total_screenshots": 500,
+  "users_active": 8
+}

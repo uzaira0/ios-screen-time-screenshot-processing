@@ -1,0 +1,27 @@
+{
+  "alignment_score": null,
+  "extracted_hourly_data": null,
+  "extracted_title": null,
+  "extracted_total": null,
+  "grid_detection_confidence": null,
+  "grid_lower_right_x": null,
+  "grid_lower_right_y": null,
+  "grid_upper_left_x": null,
+  "grid_upper_left_y": null,
+  "has_blocking_issues": true,
+  "is_daily_total": false,
+  "issues": [
+    {
+      "description": "Could not find grid anchors",
+      "issue_type": "grid_detection_failed",
+      "message": null,
+      "severity": "blocking"
+    }
+  ],
+  "message": "Grid detection failed",
+  "processing_method": null,
+  "processing_status": "failed",
+  "skip_reason": null,
+  "skipped": false,
+  "success": false
+}

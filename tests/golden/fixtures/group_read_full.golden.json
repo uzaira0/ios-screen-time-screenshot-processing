@@ -1,0 +1,16 @@
+{
+  "avg_processing_time_seconds": 15.43,
+  "created_at": "2025-03-01T10:00:00Z",
+  "id": "study-2025-cohort-a",
+  "image_type": "screen_time",
+  "max_processing_time_seconds": 120.0,
+  "min_processing_time_seconds": 2.1,
+  "name": "Study 2025 Cohort A",
+  "processing_completed": 80,
+  "processing_deleted": 2,
+  "processing_failed": 5,
+  "processing_pending": 10,
+  "processing_skipped": 3,
+  "screenshot_count": 100,
+  "total_processing_time_seconds": 1234.5
+}

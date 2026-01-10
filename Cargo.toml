@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/processing",       # ios-screen-time-image-pipeline (shared Rust processing)
+    "frontend/src-tauri",      # ios-screen-time (Tauri desktop app)
+    "rust-python",             # screenshot-processor-rs (PyO3 Python extension)
+]
+resolver = "2"

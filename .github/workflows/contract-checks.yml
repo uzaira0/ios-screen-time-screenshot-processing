@@ -1,0 +1,73 @@
+name: Contract Integrity Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shared-constants:
+    name: Shared Constants Sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check generated constants are up to date
+        run: python scripts/generate-shared-constants.py --check
+
+  tauri-ipc-contract:
+    name: Tauri IPC Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check Rust ↔ TypeScript contract
+        run: python scripts/check-tauri-contract.py
+
+  contract-tests:
+    name: Single Source of Truth Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pytest numpy opencv-python-headless
+
+      - name: Install project
+        run: pip install -e ".[dev]" || true
+
+      - name: Run contract tests
+        run: pytest tests/unit/test_export_contract.py tests/unit/test_model_attribute_contract.py -v
+
+      - name: Run cross-implementation parity tests
+        run: pytest tests/contract/test_single_source_of_truth.py -v
+        continue-on-error: true
+
+  typescript-types:
+    name: TypeScript Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: bun install
+
+      - name: Type check
+        working-directory: frontend
+        run: bunx tsc --noEmit

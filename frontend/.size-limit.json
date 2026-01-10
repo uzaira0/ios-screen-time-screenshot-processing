@@ -1,0 +1,12 @@
+[
+  {
+    "path": "dist/**/*.js",
+    "limit": "500 KB",
+    "gzip": true
+  },
+  {
+    "path": "dist/**/*.css",
+    "limit": "50 KB",
+    "gzip": true
+  }
+]

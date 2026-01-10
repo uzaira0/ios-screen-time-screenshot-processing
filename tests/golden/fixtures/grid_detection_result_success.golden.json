@@ -1,0 +1,16 @@
+{
+  "bounds": {
+    "lower_right_x": 950,
+    "lower_right_y": 480,
+    "upper_left_x": 120,
+    "upper_left_y": 250
+  },
+  "confidence": 0.93,
+  "diagnostics": {
+    "anchors_found": 2,
+    "lines_detected": 5
+  },
+  "error": null,
+  "method": "line_based",
+  "success": true
+}

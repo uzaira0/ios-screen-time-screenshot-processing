@@ -1,0 +1,19 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "ios-screen-time-screenshot-processing"
+
+[allowlist]
+  # Test fixtures and example configs
+  paths = [
+    '''tests/''',
+    '''\.env\.example''',
+    '''docs/''',
+  ]
+
+  # Known false positives
+  regexTarget = "line"
+  regexes = [
+    # Test secret keys (32+ char hex strings used in tests)
+    '''test-secret-key''',
+  ]

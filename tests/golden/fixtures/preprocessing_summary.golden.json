@@ -1,0 +1,43 @@
+{
+  "cropping": {
+    "completed": 50,
+    "exceptions": 0,
+    "failed": 3,
+    "invalidated": 2,
+    "pending": 10,
+    "running": 1
+  },
+  "device_detection": {
+    "completed": 50,
+    "exceptions": 0,
+    "failed": 3,
+    "invalidated": 2,
+    "pending": 10,
+    "running": 1
+  },
+  "ocr": {
+    "completed": 50,
+    "exceptions": 0,
+    "failed": 3,
+    "invalidated": 2,
+    "pending": 10,
+    "running": 1
+  },
+  "phi_detection": {
+    "completed": 50,
+    "exceptions": 0,
+    "failed": 3,
+    "invalidated": 2,
+    "pending": 10,
+    "running": 1
+  },
+  "phi_redaction": {
+    "completed": 50,
+    "exceptions": 0,
+    "failed": 3,
+    "invalidated": 2,
+    "pending": 10,
+    "running": 1
+  },
+  "total": 66
+}

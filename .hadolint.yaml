@@ -1,0 +1,10 @@
+# Hadolint configuration for Dockerfile linting
+ignored:
+  - DL3008  # Pin versions in apt-get install (noisy for dev images)
+  - DL3013  # Pin versions in pip install
+
+trustedRegistries:
+  - docker.io
+  - ghcr.io
+
+failure-threshold: warning

@@ -1,0 +1,37 @@
+# WASM-only Frontend Dockerfile
+# Builds a 100% client-side application with no backend dependency
+
+# Build stage
+FROM oven/bun:1-alpine AS build
+
+WORKDIR /app
+
+# Build arguments (no API URL for WASM mode)
+ENV VITE_API_BASE_URL=""
+ENV VITE_WS_URL=""
+
+# Install dependencies first for better caching
+COPY frontend/package.json frontend/bun.lock ./
+RUN bun install --frozen-lockfile --ignore-scripts
+
+# Copy frontend source
+COPY frontend/ ./
+
+# Build the application
+RUN bun run build
+
+# Production stage - simple nginx to serve static files
+FROM nginx:alpine
+
+# Copy built files
+COPY --from=build /app/dist /usr/share/nginx/html
+
+# Copy nginx config for SPA routing
+COPY docker/nginx/nginx.wasm.conf /etc/nginx/nginx.conf
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q --spider http://localhost/ || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

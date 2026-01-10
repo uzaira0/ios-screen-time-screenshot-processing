@@ -1,0 +1,116 @@
+# Docker .dockerignore
+# This file controls what gets sent to the Docker build context
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# =============================================================================
+# Node.js
+# =============================================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+.pnp/
+.pnp.js
+
+# =============================================================================
+# IDE & Editor
+# =============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# =============================================================================
+# OS Files
+# =============================================================================
+.DS_Store
+Thumbs.db
+*.log
+desktop.ini
+
+# =============================================================================
+# Project Specific
+# =============================================================================
+# Database files (use volumes instead)
+*.db
+*.db-journal
+db/
+
+# Output directories (use volumes instead)
+debug/
+output/
+uploads/
+screenshots/
+
+# Old/archived code
+.old_monolithic_files/
+
+# Documentation (not needed in containers)
+prompts/
+docs/
+reviews/
+reference_images/
+
+# Test files
+tests/
+frontend/tests/
+*.spec.ts
+*.test.ts
+*.spec.tsx
+*.test.tsx
+
+# =============================================================================
+# Git
+# =============================================================================
+.git/
+.gitignore
+.gitattributes
+
+# =============================================================================
+# Secrets & Environment
+# =============================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json

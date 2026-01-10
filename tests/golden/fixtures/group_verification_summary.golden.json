@@ -1,0 +1,10 @@
+{
+  "agreed": 25,
+  "disputed": 5,
+  "id": "study-1",
+  "image_type": "screen_time",
+  "name": "Study 1",
+  "single_verified": 40,
+  "total_screenshots": 100,
+  "total_verified": 70
+}

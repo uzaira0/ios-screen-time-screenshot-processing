@@ -1,0 +1,31 @@
+# Frontend Development Dockerfile
+# Runs Bun-native dev server with live reload
+
+FROM oven/bun:1-alpine
+
+WORKDIR /app
+
+# Install dependencies first for better caching
+# --ignore-scripts skips native module compilation (better-sqlite3 not needed for dev server)
+COPY frontend/package.json frontend/bun.lock ./
+RUN bun install --ignore-scripts
+
+# Copy the Bun dev/build server scripts (needed at runtime)
+COPY frontend/server/ ./server/
+
+# Note: Source code is mounted as a volume in docker-compose.dev.yml
+# This enables live reloading - changes to source files trigger rebuild + browser refresh
+
+# Expose dev server port
+EXPOSE 5173
+
+# Environment variables for development
+ENV NODE_ENV=development
+
+# Run as non-root user (bun user exists in oven/bun images)
+# Must chown /app so bun user can create .bun-dev/ build output directory
+RUN chown -R bun:bun /app
+USER bun
+
+# Start Bun dev server (binds to 0.0.0.0 by default via Bun.serve)
+CMD ["bun", "run", "dev"]

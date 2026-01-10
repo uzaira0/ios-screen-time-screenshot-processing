@@ -1,0 +1,230 @@
+import type cv from '@techstark/opencv-js';
+import type { GridCoordinates, HourlyData } from '../../../models';
+import {
+  darkenNonWhite,
+  reduceColorCount,
+  scaleUp,
+  isClose,
+  removeAllBut
+} from './imageUtils';
+
+const SCALE_AMOUNT = 4;
+const NUM_HOURS = 24;
+const MAX_MINUTES = 60;
+const LOWER_GRID_BUFFER = 2;
+
+export function extractHourlyData(
+  cvLib: typeof cv,
+  imageMat: cv.Mat,
+  gridCoords: GridCoordinates,
+  isBattery: boolean
+): HourlyData {
+  const { upper_left, lower_right } = gridCoords;
+
+  const roiX = upper_left.x;
+  const roiY = upper_left.y;
+  const roiWidth = lower_right.x - upper_left.x;
+  const roiHeight = lower_right.y - upper_left.y;
+
+  let processedImg = imageMat.clone();
+
+  if (isBattery) {
+    const darkBlueRemoved = removeAllBut(cvLib, processedImg, [255, 121, 0]);
+    processedImg.delete();
+    processedImg = darkBlueRemoved;
+
+    const roiRegion = processedImg.roi(
+      new cvLib.Rect(roiX, roiY, roiWidth, roiHeight)
+    );
+
+    let darkBlueSum = 0;
+    for (let y = 0; y < roiRegion.rows; y++) {
+      for (let x = 0; x < roiRegion.cols; x++) {
+        for (let c = 0; c < roiRegion.channels(); c++) {
+          darkBlueSum += (255 - roiRegion.ucharPtr(y, x)[c]);
+        }
+      }
+    }
+    roiRegion.delete();
+
+    if (darkBlueSum < 10) {
+      processedImg.delete();
+      processedImg = imageMat.clone();
+      const lightBlueRemoved = removeAllBut(cvLib, processedImg, [0, 255 - 121, 255]);
+      processedImg.delete();
+      processedImg = lightBlueRemoved;
+    }
+  }
+
+  const darkened = darkenNonWhite(cvLib, processedImg);
+  processedImg.delete();
+
+  const reduced = reduceColorCount(cvLib, darkened, 2);
+  darkened.delete();
+
+  const scaled = scaleUp(cvLib, reduced, SCALE_AMOUNT);
+  reduced.delete();
+
+  const scaledRoiX = roiX * SCALE_AMOUNT;
+  const scaledRoiY = roiY * SCALE_AMOUNT;
+  const scaledRoiWidth = roiWidth * SCALE_AMOUNT;
+  const scaledRoiHeight = roiHeight * SCALE_AMOUNT;
+
+  const roi = scaled.roi(
+    new cvLib.Rect(scaledRoiX, scaledRoiY, scaledRoiWidth, scaledRoiHeight)
+  );
+
+  const hourlyData: HourlyData = {};
+  const sliceWidthFloat = scaledRoiWidth / NUM_HOURS;
+
+  for (let hour = 0; hour < NUM_HOURS; hour++) {
+    const sliceX = Math.floor(hour * sliceWidthFloat);
+    const sliceWidth = Math.floor(sliceWidthFloat);
+
+    const slice = roi.roi(
+      new cvLib.Rect(sliceX, 0, sliceWidth, scaledRoiHeight)
+    );
+
+    const middleColumn = Math.floor(sliceWidth / 2);
+    const minutes = analyzeBarHeight(cvLib, slice, middleColumn, scaledRoiHeight);
+
+    hourlyData[hour] = minutes;
+
+    slice.delete();
+  }
+
+  roi.delete();
+  scaled.delete();
+
+  return hourlyData;
+}
+
+function analyzeBarHeight(
+  _cvLib: typeof cv,
+  slice: cv.Mat,
+  middleColumn: number,
+  maxHeight: number
+): number {
+  let counter = 0;
+
+  for (let y = 0; y < maxHeight; y++) {
+    const pixel: number[] = [];
+    for (let c = 0; c < slice.channels(); c++) {
+      pixel.push(slice.ucharPtr(y, middleColumn)[c]);
+    }
+
+    const pixelSum = pixel.reduce((sum, val) => sum + val, 0);
+
+    if (pixelSum === 0) {
+      counter++;
+    }
+
+    if (isClose(pixel, [255, 255, 255], 2) && y < maxHeight - LOWER_GRID_BUFFER) {
+      counter = 0;
+    }
+  }
+
+  const minutes = Math.floor(MAX_MINUTES * counter / maxHeight);
+
+  return minutes;
+}
+
+export enum LineExtractionMode {
+  HORIZONTAL = 'HORIZONTAL',
+  VERTICAL = 'VERTICAL'
+}
+
+export function extractLine(
+  cvLib: typeof cv,
+  img: cv.Mat,
+  x0: number,
+  x1: number,
+  y0: number,
+  y1: number,
+  mode: LineExtractionMode
+): number {
+  const subImage = img.roi(new cvLib.Rect(x0, y0, x1 - x0, y1 - y0));
+
+  const reduced = reduceColorCount(cvLib, subImage, 2);
+  subImage.delete();
+
+  const pixelValue = getMostCommonPixelValue(cvLib, reduced);
+
+  if (!pixelValue || pixelValue.length === 0) {
+    reduced.delete();
+    return 0;
+  }
+
+  let result = 0;
+
+  if (mode === LineExtractionMode.HORIZONTAL) {
+    for (let i = 0; i < reduced.rows; i++) {
+      let rowScore = 0;
+      for (let j = 0; j < reduced.cols; j++) {
+        const pixel: number[] = [];
+        for (let c = 0; c < reduced.channels(); c++) {
+          pixel.push(reduced.ucharPtr(i, j)[c]);
+        }
+        if (isClose(pixel, pixelValue)) {
+          rowScore++;
+        }
+      }
+      if (rowScore > 0.5 * reduced.cols) {
+        result = i;
+        break;
+      }
+    }
+  } else if (mode === LineExtractionMode.VERTICAL) {
+    for (let j = 0; j < reduced.cols; j++) {
+      let colScore = 0;
+      for (let i = 0; i < reduced.rows; i++) {
+        const pixel: number[] = [];
+        for (let c = 0; c < reduced.channels(); c++) {
+          pixel.push(reduced.ucharPtr(i, j)[c]);
+        }
+        if (isClose(pixel, pixelValue)) {
+          colScore++;
+        }
+      }
+      if (colScore > 0.25 * reduced.rows) {
+        result = j;
+        break;
+      }
+    }
+  }
+
+  reduced.delete();
+
+  return result;
+}
+
+function getMostCommonPixelValue(_cvLib: typeof cv, src: cv.Mat): number[] | null {
+  const pixelCounts = new Map<string, { pixel: number[]; count: number }>();
+
+  for (let y = 0; y < src.rows; y++) {
+    for (let x = 0; x < src.cols; x++) {
+      const pixel: number[] = [];
+      for (let c = 0; c < src.channels(); c++) {
+        pixel.push(src.ucharPtr(y, x)[c]);
+      }
+
+      const key = pixel.join(',');
+      const existing = pixelCounts.get(key);
+      if (existing) {
+        existing.count++;
+      } else {
+        pixelCounts.set(key, { pixel, count: 1 });
+      }
+    }
+  }
+
+  const sorted = Array.from(pixelCounts.values())
+    .sort((a, b) => a.count - b.count);
+
+  if (sorted.length <= 1) {
+    return null;
+  }
+
+  const result = sorted[sorted.length - 2];
+  return result ? result.pixel : null;
+}

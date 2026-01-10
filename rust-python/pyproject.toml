@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "screenshot-processor-rs"
+version = "0.1.0"
+description = "Rust-native image processing for iOS Screen Time screenshots"
+requires-python = ">=3.10"
+
+[tool.maturin]
+# The Rust module name that Python imports
+module-name = "screenshot_processor_rs"

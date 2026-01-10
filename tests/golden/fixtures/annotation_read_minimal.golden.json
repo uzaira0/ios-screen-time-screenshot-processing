@@ -1,0 +1,17 @@
+{
+  "created_at": "2025-01-01T00:00:00Z",
+  "extracted_title": null,
+  "extracted_total": null,
+  "grid_lower_right": null,
+  "grid_upper_left": null,
+  "hourly_values": {
+    "0": 0
+  },
+  "id": 1,
+  "notes": null,
+  "screenshot_id": 1,
+  "status": "submitted",
+  "time_spent_seconds": null,
+  "updated_at": "2025-01-01T00:00:00Z",
+  "user_id": 1
+}

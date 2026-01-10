@@ -1,0 +1,19 @@
+{
+  "auto_select": true,
+  "engine_type": "tesseract",
+  "hunyuan_max_retries": 3,
+  "hunyuan_rate_limit": 5.0,
+  "hunyuan_timeout": 120,
+  "hunyuan_url": "http://YOUR_OCR_HOST:8080",
+  "hybrid_enable_hunyuan": true,
+  "hybrid_enable_paddleocr": true,
+  "hybrid_enable_tesseract": true,
+  "hybrid_paddleocr_for_grid": false,
+  "paddleocr_timeout": 60,
+  "paddleocr_url": "http://YOUR_OCR_HOST:8081",
+  "prefer_hunyuan": true,
+  "psm_mode_data": "12",
+  "psm_mode_default": "3",
+  "tesseract_cmd": null,
+  "use_hybrid": false
+}
