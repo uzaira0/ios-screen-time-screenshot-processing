@@ -12,6 +12,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 # Import database models for autogenerate support
 from src.screenshot_processor.web.database.models import Base
 
+# Import workflow models so autogenerate detects them (after Base is loaded)
+import src.screenshot_processor.workflows.engine.models  # noqa: F401
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
