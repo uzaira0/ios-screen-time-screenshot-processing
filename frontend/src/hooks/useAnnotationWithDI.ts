@@ -85,6 +85,11 @@ export const useAnnotation = (groupId?: string, processingStatus?: ProcessingSta
     };
   }, [groupId, processingStatus]);
 
+  // Recover any annotations that were backed up to localStorage on a previous save failure
+  useEffect(() => {
+    store.getState().recoverUnsavedAnnotations().catch(() => {});
+  }, [store]);
+
   // Select reactive data with useShallow (triggers re-render only when data changes)
   const {
     currentScreenshot,

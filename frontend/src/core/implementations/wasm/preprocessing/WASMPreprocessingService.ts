@@ -37,7 +37,7 @@ import type { PHIRegion } from "@/core/interfaces/IPreprocessingService";
 import type { IProcessingService } from "@/core/interfaces/IProcessingService";
 import { createObjectURL as cachedCreateObjectURL } from "../storage/opfsBlobStorage";
 
-import { PREPROCESSING_STAGES } from "@/core/generated/constants";
+import { PREPROCESSING_STAGES, StageStatus as SS } from "@/core/generated/constants";
 const STAGES: PreprocessingStage[] = [...PREPROCESSING_STAGES];
 
 // ---------------------------------------------------------------------------
@@ -139,6 +139,34 @@ export class WASMPreprocessingService implements IPreprocessingService {
     this.processing = processing;
   }
 
+  async getStorageEstimate(): Promise<{ usage: number; quota: number; percentUsed: number } | null> {
+    return this.storage.getStorageEstimate();
+  }
+
+  async reconcileStuckStages(): Promise<number> {
+    const screenshots = await this.storage.getAllScreenshots();
+    let reconciled = 0;
+    for (const s of screenshots) {
+      const pp = getPreprocessing(s);
+      let changed = false;
+      const newStageStatus = { ...pp.stage_status };
+      for (const stage of STAGES) {
+        if (newStageStatus[stage] === "running") {
+          newStageStatus[stage] = SS.PENDING;
+          changed = true;
+        }
+      }
+      if (changed) {
+        const updatedPp: PreprocessingMeta = { ...pp, stage_status: newStageStatus };
+        await this.storage.updateScreenshot(s.id as number, {
+          processing_metadata: setPreprocessing(s, updatedPp),
+        });
+        reconciled++;
+      }
+    }
+    return reconciled;
+  }
+
   forceStop(): void {
     // Terminate the processing worker (kills any in-flight OCR/grid detection).
     // It will be lazily recreated on the next processImage/detectGrid call.
@@ -189,7 +217,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
     for (const s of screenshots) {
       const pp = getPreprocessing(s);
       for (const stage of STAGES) {
-        const status = pp.stage_status[stage] ?? "pending";
+        const status = pp.stage_status[stage] ?? SS.PENDING;
         const stageSummary = stageSummaries[stage]!;
         if (status in stageSummary) {
           stageSummary[status] = (stageSummary[status] ?? 0) + 1;
@@ -223,10 +251,10 @@ export class WASMPreprocessingService implements IPreprocessingService {
 
     const eligible = screenshots.filter((s) => {
       const pp = getPreprocessing(s);
-      const status = pp.stage_status[stage] ?? "pending";
-      if (status !== "pending" && status !== "invalidated" && status !== "failed") return false;
+      const status = pp.stage_status[stage] ?? SS.PENDING;
+      if (status !== SS.PENDING && status !== SS.INVALIDATED && status !== SS.FAILED) return false;
       // Check prereqs
-      return prereqs.every((p) => pp.stage_status[p] === "completed");
+      return prereqs.every((p) => pp.stage_status[p] === SS.COMPLETED);
     });
 
     if (eligible.length === 0) {
@@ -317,7 +345,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
         const result = detectDevice(width, height);
 
         const pp = getPreprocessing(screenshot);
-        const updated = addEvent(pp, stage, "completed", {
+        const updated = addEvent(pp, stage, SS.COMPLETED, {
           device_model: result.model ?? "unknown",
           device_family: result.family ?? "unknown",
           device_category: result.category,
@@ -333,7 +361,17 @@ export class WASMPreprocessingService implements IPreprocessingService {
       }
 
       case "cropping": {
-        if (!blob) throw new Error("No image blob for cropping");
+        if (!blob) {
+          const pp = getPreprocessing(screenshot);
+          const updated = addEvent(pp, stage, SS.COMPLETED, {
+            processing_status: "failed",
+            error: "Image file missing from storage. Re-upload this screenshot.",
+          });
+          await this.storage.updateScreenshot(id, {
+            processing_metadata: setPreprocessing(screenshot, updated),
+          });
+          return;
+        }
 
         // Use the preserved original if available (handles re-runs after reset)
         const originalBlob = await this.storage.getStageBlob(id, "original");
@@ -358,7 +396,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
         const detectionEvent = pp.events.find(
           (e) => e.stage === "device_detection" && e.event_id === pp.current_events.device_detection,
         );
-        const updated = addEvent(pp, stage, "completed", {
+        const updated = addEvent(pp, stage, SS.COMPLETED, {
           was_cropped: cropResult.wasCropped,
           was_patched: false,
           original_dimensions: [cropResult.originalDimensions.width, cropResult.originalDimensions.height],
@@ -374,7 +412,17 @@ export class WASMPreprocessingService implements IPreprocessingService {
       }
 
       case "phi_detection": {
-        if (!blob) throw new Error("No image blob for PHI detection");
+        if (!blob) {
+          const pp = getPreprocessing(screenshot);
+          const updated = addEvent(pp, stage, SS.COMPLETED, {
+            processing_status: "failed",
+            error: "Image file missing from storage. Re-upload this screenshot.",
+          });
+          await this.storage.updateScreenshot(id, {
+            processing_metadata: setPreprocessing(screenshot, updated),
+          });
+          return;
+        }
 
         const phiResult = await detectPHI(blob, {
           llmEndpoint: options.llm_endpoint,
@@ -383,7 +431,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
         });
 
         const pp = getPreprocessing(screenshot);
-        const updated = addEvent(pp, stage, "completed", {
+        const updated = addEvent(pp, stage, SS.COMPLETED, {
           phi_detected: phiResult.regions.length > 0,
           regions_count: phiResult.regions.length,
           phi_entities: phiResult.regions,
@@ -400,7 +448,17 @@ export class WASMPreprocessingService implements IPreprocessingService {
       }
 
       case "phi_redaction": {
-        if (!blob) throw new Error("No image blob for PHI redaction");
+        if (!blob) {
+          const pp = getPreprocessing(screenshot);
+          const updated = addEvent(pp, stage, SS.COMPLETED, {
+            processing_status: "failed",
+            error: "Image file missing from storage. Re-upload this screenshot.",
+          });
+          await this.storage.updateScreenshot(id, {
+            processing_metadata: setPreprocessing(screenshot, updated),
+          });
+          return;
+        }
 
         // Get PHI regions from the detection stage
         const pp = getPreprocessing(screenshot);
@@ -410,7 +468,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
 
         if (regions.length === 0) {
           // No PHI to redact
-          const updated = addEvent(pp, stage, "completed", {
+          const updated = addEvent(pp, stage, SS.COMPLETED, {
             phi_detected: false,
             redacted: false,
             redaction_method: options.phi_redaction_method ?? "redbox",
@@ -429,7 +487,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
         await this.storage.saveImageBlob(id, redactedBlob);
         await this.storage.saveStageBlob(id, "phi_redaction", redactedBlob);
 
-        const updated = addEvent(pp, stage, "completed", {
+        const updated = addEvent(pp, stage, SS.COMPLETED, {
           phi_detected: true,
           redacted: true,
           redaction_method: method,
@@ -443,7 +501,17 @@ export class WASMPreprocessingService implements IPreprocessingService {
       }
 
       case "ocr": {
-        if (!blob) throw new Error("No image blob for OCR processing");
+        if (!blob) {
+          const pp = getPreprocessing(screenshot);
+          const updated = addEvent(pp, stage, SS.COMPLETED, {
+            processing_status: "failed",
+            error: "Image file missing from storage. Re-upload this screenshot.",
+          });
+          await this.storage.updateScreenshot(id, {
+            processing_metadata: setPreprocessing(screenshot, updated),
+          });
+          return;
+        }
         const _ocrT0 = performance.now();
 
         const ocrMethod = (options.ocr_method ?? "line_based") as "ocr_anchored" | "line_based";
@@ -476,7 +544,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
         if (!grid) {
           // Both methods failed — record the failure
           const ppOcr = getPreprocessing(screenshot);
-          const updated = addEvent(ppOcr, stage, "completed", {
+          const updated = addEvent(ppOcr, stage, SS.COMPLETED, {
             processing_status: "failed",
             processing_method: ocrMethod,
             extracted_title: null,
@@ -508,7 +576,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
           console.log(`[BENCH] OCR stage - TOTAL: ${(performance.now() - _ocrT0).toFixed(0)}ms`);
         } catch (err) {
           const ppOcr = getPreprocessing(screenshot);
-          const updated = addEvent(ppOcr, stage, "completed", {
+          const updated = addEvent(ppOcr, stage, SS.COMPLETED, {
             processing_status: "failed",
             processing_method: ocrMethod,
             extracted_title: null,
@@ -526,7 +594,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
         // Auto-skip daily total images if setting is enabled
         if (options.skip_daily_totals && ocrResult.title === "Daily Total") {
           const ppSkip = getPreprocessing(screenshot);
-          const skippedEvent = addEvent(ppSkip, stage, "completed", {
+          const skippedEvent = addEvent(ppSkip, stage, SS.COMPLETED, {
             processing_status: "skipped",
             processing_method: ocrMethod,
             extracted_title: "Daily Total",
@@ -543,7 +611,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
         }
 
         const ppOcr = getPreprocessing(screenshot);
-        const updated = addEvent(ppOcr, stage, "completed", {
+        const updated = addEvent(ppOcr, stage, SS.COMPLETED, {
           processing_status: ocrResult.gridDetectionFailed ? "failed" : "completed",
           processing_method: ocrMethod,
           extracted_title: ocrResult.title,
@@ -588,8 +656,8 @@ export class WASMPreprocessingService implements IPreprocessingService {
       const newStageStatus = { ...pp.stage_status };
       const newCurrentEvents = { ...pp.current_events };
       for (const ds of downstreamStages) {
-        if (newStageStatus[ds] && newStageStatus[ds] !== "pending") {
-          newStageStatus[ds] = "pending";
+        if (newStageStatus[ds] && newStageStatus[ds] !== SS.PENDING) {
+          newStageStatus[ds] = SS.PENDING;
           delete newCurrentEvents[ds];
           changed = true;
         }
@@ -610,6 +678,35 @@ export class WASMPreprocessingService implements IPreprocessingService {
     return { message: `Reset ${stage.replace(/_/g, " ")} for ${count} screenshot(s)`, count };
   }
 
+  async skipStage(stage: PreprocessingStage, groupId: string, screenshotIds?: number[], unskip?: boolean): Promise<{ message: string; count?: number }> {
+    const screenshots = await this.storage.getAllScreenshots({ group_id: groupId });
+    const targets = screenshotIds ? screenshots.filter(s => screenshotIds.includes(s.id as number)) : screenshots;
+    let count = 0;
+
+    for (const s of targets) {
+      const pp = getPreprocessing(s);
+      const current = pp.stage_status[stage] ?? SS.PENDING;
+      const newStageStatus = { ...pp.stage_status };
+
+      if (unskip) {
+        if (current !== SS.SKIPPED) continue;
+        newStageStatus[stage] = SS.PENDING;
+      } else {
+        if (!(current === SS.PENDING || current === SS.INVALIDATED || current === SS.FAILED || current === SS.CANCELLED)) continue;
+        newStageStatus[stage] = SS.SKIPPED;
+      }
+
+      const updatedPp: PreprocessingMeta = { ...pp, stage_status: newStageStatus };
+      await this.storage.updateScreenshot(s.id as number, {
+        processing_metadata: setPreprocessing(s, updatedPp),
+      });
+      count++;
+    }
+
+    const action = unskip ? "Unskipped" : "Skipped";
+    return { message: `${action} ${stage.replace(/_/g, " ")} for ${count} screenshot(s)`, count };
+  }
+
   async invalidateFromStage(screenshotId: number, stage: string): Promise<void> {
     const screenshot = await this.storage.getScreenshot(screenshotId);
     if (!screenshot) return;
@@ -622,8 +719,8 @@ export class WASMPreprocessingService implements IPreprocessingService {
     const newStageStatus = { ...pp.stage_status };
 
     for (const ds of downstream) {
-      if (newStageStatus[ds] && newStageStatus[ds] !== "pending") {
-        newStageStatus[ds] = "invalidated";
+      if (newStageStatus[ds] && newStageStatus[ds] !== SS.PENDING) {
+        newStageStatus[ds] = SS.INVALIDATED;
       }
     }
 
@@ -731,7 +828,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
       }
 
       const pp = getPreprocessing(screenshot);
-      const updated = addEvent(pp, "cropping", "completed", {
+      const updated = addEvent(pp, "cropping", SS.COMPLETED, {
         was_cropped: true,
         was_patched: false,
         manual: true,
@@ -765,7 +862,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
     if (!screenshot) throw new Error(`Screenshot ${screenshotId} not found`);
 
     const pp = getPreprocessing(screenshot);
-    const updated = addEvent(pp, "phi_detection", "completed", {
+    const updated = addEvent(pp, "phi_detection", SS.COMPLETED, {
       phi_detected: body.regions?.length > 0,
       regions_count: body.regions?.length ?? 0,
       phi_entities: body.regions ?? [],
@@ -791,7 +888,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
     const screenshot = await this.storage.getScreenshot(screenshotId);
     if (screenshot) {
       const pp = getPreprocessing(screenshot);
-      const updated = addEvent(pp, "phi_redaction", "completed", {
+      const updated = addEvent(pp, "phi_redaction", SS.COMPLETED, {
         phi_detected: regions.length > 0,
         redacted: true,
         redaction_method: method,

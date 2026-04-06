@@ -1,10 +1,26 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePreprocessingStore } from "@/hooks/usePreprocessingWithDI";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog";
+import { config } from "@/config";
 import type { UploadFileItem } from "@/store/preprocessingStore";
 import { UploadDropZone } from "./UploadDropZone";
 import { UploadTagTable } from "./UploadTagTable";
 import { UploadProgressBar } from "./UploadProgressBar";
+
+function useStorageWarning() {
+  const [percentUsed, setPercentUsed] = useState<number | null>(null);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    if (!config.isLocalMode || !navigator.storage?.estimate) return;
+    navigator.storage.estimate().then(({ usage, quota }) => {
+      if (quota) setPercentUsed(((usage ?? 0) / quota) * 100);
+    }).catch(() => {});
+  }, []);
+
+  if (dismissed || percentUsed === null || percentUsed <= 80) return null;
+  return { percentUsed, dismiss: () => setDismissed(true) };
+}
 
 export const BrowserUpload = () => {
   const uploadFiles = usePreprocessingStore((s) => s.uploadFiles);
@@ -21,6 +37,7 @@ export const BrowserUpload = () => {
   const setSelectedGroupId = usePreprocessingStore((s) => s.setSelectedGroupId);
 
   const { confirm, ConfirmDialog } = useConfirmDialog();
+  const storageWarning = useStorageWarning();
 
   const canUpload = uploadFiles.length > 0 && uploadGroupId.trim().length > 0 && !isUploading;
 
@@ -43,10 +60,22 @@ export const BrowserUpload = () => {
     resetUploadResult();
   };
 
+  const storageBanner = storageWarning && (
+    <div className="flex items-center justify-between p-3 rounded-lg border border-yellow-200 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20">
+      <p className="text-sm text-yellow-800 dark:text-yellow-300">
+        Storage is {storageWarning.percentUsed.toFixed(0)}% full. Delete old groups to free space.
+      </p>
+      <button onClick={storageWarning.dismiss} className="ml-3 text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 dark:hover:text-yellow-200 text-sm font-medium">
+        Dismiss
+      </button>
+    </div>
+  );
+
   // Step 1: Drop zone (no files yet, no completed upload)
   if (uploadFiles.length === 0 && !isUploading && !uploadProgress) {
     return (
       <div className="space-y-4">
+        {storageBanner}
         <UploadDropZone onFilesSelected={setUploadFiles} />
       </div>
     );
@@ -122,6 +151,7 @@ export const BrowserUpload = () => {
   // Step 2: Tag table with ability to add more folders
   return (
     <div className="space-y-4">
+      {storageBanner}
       <UploadTagTable
         files={uploadFiles}
         groupId={uploadGroupId}

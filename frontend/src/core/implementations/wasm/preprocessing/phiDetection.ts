@@ -155,14 +155,14 @@ async function runNER(text: string): Promise<NERResult> {
     pendingNER.set(id, { resolve, reject: () => resolve({ entities: [], status: "failed" }) });
     worker.postMessage({ text, id });
 
-    // Timeout after 30s (model download + inference)
+    // Timeout after 60s (model download on first run can exceed 30s)
     setTimeout(() => {
       if (pendingNER.has(id)) {
         pendingNER.delete(id);
-        console.warn(`[phiDetection] NER timed out after 30s for request ${id} — falling back to regex-only`);
+        console.warn(`[phiDetection] NER timed out after 60s for request ${id} — falling back to regex-only`);
         resolve({ entities: [], status: "timeout" });
       }
-    }, 30000);
+    }, 60_000);
   });
 }
 
@@ -174,13 +174,20 @@ let tesseractWorker: Awaited<ReturnType<typeof import("tesseract.js").createWork
 
 async function getTesseractWorker() {
   if (!tesseractWorker) {
-    const Tesseract = await import("tesseract.js");
-    // Use locally bundled worker to avoid CDN dependency (required for Tauri CSP + offline)
-    tesseractWorker = await Tesseract.createWorker("eng", undefined, {
-      workerPath: new URL("/tesseract-worker.min.js", window.location.origin).href,
-      corePath: new URL("/", window.location.origin).href,
-      langPath: new URL("/", window.location.origin).href,
-    });
+    const result = await Promise.race([
+      (async () => {
+        const Tesseract = await import("tesseract.js");
+        return Tesseract.createWorker("eng", undefined, {
+          workerPath: new URL("/tesseract-worker.min.js", window.location.origin).href,
+          corePath: new URL("/", window.location.origin).href,
+          langPath: new URL("/", window.location.origin).href,
+        });
+      })(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Tesseract worker failed to initialize in 15s")), 15_000),
+      ),
+    ]);
+    tesseractWorker = result;
   }
   return tesseractWorker;
 }

@@ -12,13 +12,13 @@ import { api } from "@/services/apiClient";
 import { config } from "@/config";
 import { useSettingsStore } from "@/store/settingsStore";
 import toast from "react-hot-toast";
-import { PREPROCESSING_STAGES, type PreprocessingStages, type StageStatuses } from "@/core/generated/constants";
+import { PREPROCESSING_STAGES, StageStatus as SS, type PreprocessingStages, type StageStatuses } from "@/core/generated/constants";
 import { parseOcrTotalMinutes, hasTotalsMismatchByThreshold } from "@/utils/formatters";
 
 // Local types not in backend schema (UI-only concerns)
 type Stage = PreprocessingStages;
 type StageStatus = StageStatuses;
-type FilterMode = "all" | "needs_review" | "invalidated" | "completed" | "pending";
+type FilterMode = "all" | "needs_review" | "invalidated" | "completed" | "skipped" | "pending";
 type PageMode = "pipeline" | "upload";
 
 interface UploadFileItem {
@@ -125,6 +125,8 @@ interface PreprocessingState {
   runStage: (stage: Stage, screenshotIds?: number[]) => Promise<void>;
   stopStage: () => void;
   resetStage: (stage: Stage) => Promise<void>;
+  skipStage: (stage: Stage, screenshotIds?: number[]) => Promise<void>;
+  unskipStage: (stage: Stage, screenshotIds?: number[]) => Promise<void>;
   invalidateFromStage: (screenshotId: number, stage: string) => Promise<void>;
   loadEventLog: (screenshotId: number) => Promise<void>;
   clearEventLog: () => void;
@@ -167,6 +169,8 @@ interface PreprocessingState {
 export function createPreprocessingStore(service: IPreprocessingService) {
   // Per-instance abort flag for upload cancellation (not module-level to avoid cross-store leaks)
   let _uploadCancelled = false;
+  // One-shot guard: reconcile stuck stages on first loadSummary in WASM mode
+  let _reconciled = false;
 
   return create<PreprocessingState>((set, get) => ({
   // Initial state
@@ -325,6 +329,20 @@ export function createPreprocessingStore(service: IPreprocessingService) {
   loadSummary: async () => {
     const { selectedGroupId } = get();
     if (!selectedGroupId) return;
+
+    // Reconcile stuck stages on first load in WASM mode (recovers from tab crash)
+    if (!_reconciled && config.isLocalMode) {
+      _reconciled = true;
+      try {
+        const count = await service.reconcileStuckStages?.();
+        if (count && count > 0) {
+          console.log(`[Preprocessing] Reconciled ${count} stuck screenshot(s)`);
+          toast(`Recovered ${count} screenshot(s) from interrupted processing`, { duration: 5000 });
+        }
+      } catch (err) {
+        console.error("[Preprocessing] Stuck-state reconciliation failed:", err);
+      }
+    }
 
     try {
       const data = await service.getSummary(selectedGroupId);
@@ -494,6 +512,34 @@ export function createPreprocessingStore(service: IPreprocessingService) {
     }
   },
 
+  skipStage: async (stage, screenshotIds) => {
+    const { selectedGroupId } = get();
+    if (!selectedGroupId) return;
+    const action = "skip";
+    try {
+      const result = await service.skipStage(stage, selectedGroupId, screenshotIds);
+      toast.success(result.message || `${stage.replace(/_/g, " ")} skipped`);
+      await Promise.all([get().loadScreenshots(), get().loadSummary()]);
+    } catch (err) {
+      console.error(`Failed to ${action} stage:`, err);
+      toast.error(`Failed to ${action} stage`);
+    }
+  },
+
+  unskipStage: async (stage, screenshotIds) => {
+    const { selectedGroupId } = get();
+    if (!selectedGroupId) return;
+    const action = "unskip";
+    try {
+      const result = await service.skipStage(stage, selectedGroupId, screenshotIds, true);
+      toast.success(result.message || `${stage.replace(/_/g, " ")} unskipped`);
+      await Promise.all([get().loadScreenshots(), get().loadSummary()]);
+    } catch (err) {
+      console.error(`Failed to ${action} stage:`, err);
+      toast.error(`Failed to ${action} stage`);
+    }
+  },
+
   invalidateFromStage: async (screenshotId, stage) => {
     try {
       await service.invalidateFromStage(screenshotId, stage);
@@ -604,6 +650,16 @@ export function createPreprocessingStore(service: IPreprocessingService) {
       toast.success(`Uploaded ${totalCompleted} screenshot(s)`);
     } else {
       toast.error(`Upload completed with ${errors.length} error(s)`);
+    }
+
+    // Check storage quota after upload (WASM mode)
+    if (config.isLocalMode && service.getStorageEstimate) {
+      try {
+        const est = await service.getStorageEstimate();
+        if (est && est.percentUsed > 80) {
+          toast(`Storage is ${est.percentUsed.toFixed(0)}% full. Consider deleting old groups to free space.`, { duration: 8000 });
+        }
+      } catch { /* ignore */ }
     }
 
     // Refresh groups and screenshots
@@ -719,12 +775,12 @@ export function createPreprocessingStore(service: IPreprocessingService) {
     // Compute from screenshots if no summary
     const { screenshots } = get();
     const counts: StageSummary = {
-      completed: 0, pending: 0, invalidated: 0,
+      completed: 0, pending: 0, skipped: 0, invalidated: 0,
       running: 0, failed: 0, cancelled: 0, exceptions: 0,
     };
     for (const s of screenshots) {
       const pp = (s.processing_metadata as Record<string, unknown>)?.preprocessing as Record<string, unknown> | undefined;
-      const stageStatus = (pp?.stage_status as Record<string, string>)?.[stage] ?? "pending";
+      const stageStatus = (pp?.stage_status as Record<string, string>)?.[stage] ?? SS.PENDING;
       if (stageStatus in counts) {
         counts[stageStatus as keyof StageSummary] += 1;
       } else {
@@ -742,11 +798,13 @@ export function createPreprocessingStore(service: IPreprocessingService) {
       const status = get().getScreenshotStageStatus(s, stage);
       switch (filter) {
         case "completed":
-          return status === "completed";
+          return status === SS.COMPLETED;
         case "pending":
-          return status === "pending";
+          return status === SS.PENDING;
+        case "skipped":
+          return status === SS.SKIPPED;
         case "invalidated":
-          return status === "invalidated";
+          return status === SS.INVALIDATED;
         case "needs_review":
           return get().isScreenshotException(s, stage);
         default:
@@ -757,13 +815,13 @@ export function createPreprocessingStore(service: IPreprocessingService) {
 
   getScreenshotStageStatus: (screenshot, stage) => {
     const pp = (screenshot.processing_metadata as Record<string, unknown>)?.preprocessing as Record<string, unknown> | undefined;
-    return ((pp?.stage_status as Record<string, string>)?.[stage] ?? "pending") as StageStatus;
+    return ((pp?.stage_status as Record<string, string>)?.[stage] ?? SS.PENDING) as StageStatus;
   },
 
   isScreenshotException: (screenshot, stage) => {
     // Only flag completed stages (matches backend is_exception logic)
     const status = get().getScreenshotStageStatus(screenshot, stage);
-    if (status !== "completed") return false;
+    if (status !== SS.COMPLETED) return false;
 
     const pp = (screenshot.processing_metadata as Record<string, unknown>)?.preprocessing as Record<string, unknown> | undefined;
     if (!pp) return false;
@@ -788,7 +846,7 @@ export function createPreprocessingStore(service: IPreprocessingService) {
     } else if (stage === "phi_redaction") {
       if (result.phi_detected && !result.redacted) return true;
     } else if (stage === "ocr") {
-      if (result.processing_status === "failed") return true;
+      if (result.processing_status === SS.FAILED) return true;
       if (result.has_blocking_issues) return true;
       // Low alignment score
       const align = screenshot.alignment_score as number | null;
@@ -818,10 +876,10 @@ export function createPreprocessingStore(service: IPreprocessingService) {
     for (const s of screenshots) {
       const pp = (s.processing_metadata as Record<string, unknown>)?.preprocessing as Record<string, unknown> | undefined;
       const statuses = (pp?.stage_status as Record<string, string>) ?? {};
-      const thisStatus = statuses[stage] ?? "pending";
-      if (thisStatus !== "pending" && thisStatus !== "invalidated" && thisStatus !== "failed") continue;
+      const thisStatus = statuses[stage] ?? SS.PENDING;
+      if (thisStatus !== SS.PENDING && thisStatus !== SS.INVALIDATED && thisStatus !== SS.FAILED) continue;
       // Check prerequisites
-      const prereqsMet = prereqs.every((p) => statuses[p] === "completed");
+      const prereqsMet = prereqs.every((p) => statuses[p] === SS.COMPLETED || statuses[p] === SS.SKIPPED);
       if (prereqsMet) {
         eligible++;
       } else {

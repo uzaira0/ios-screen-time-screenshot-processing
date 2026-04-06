@@ -124,8 +124,63 @@ export const createAnnotationSlice = (
       }
     } catch (error: unknown) {
       const message = extractErrorMessage(error, "Failed to save annotation");
-      set({ error: message });
+      // Backup to localStorage as safety net (annotation is ~1KB)
+      try {
+        const backup = {
+          screenshot_id: currentScreenshot.id,
+          hourly_values: currentAnnotation.hourly_values || {},
+          extracted_title: currentScreenshot.extracted_title || null,
+          extracted_total: currentScreenshot.extracted_total || null,
+          grid_upper_left: currentAnnotation.grid_coords.upper_left,
+          grid_lower_right: currentAnnotation.grid_coords.lower_right,
+          notes: notes || currentAnnotation.notes || null,
+          saved_at: new Date().toISOString(),
+        };
+        const existing = JSON.parse(localStorage.getItem("unsaved-annotations") || "[]");
+        existing.push(backup);
+        localStorage.setItem("unsaved-annotations", JSON.stringify(existing));
+        set({ error: `${message}. Saved locally — will retry on next load.` });
+      } catch {
+        set({ error: message });
+      }
       throw error;
+    }
+  },
+
+  recoverUnsavedAnnotations: async () => {
+    try {
+      const raw = localStorage.getItem("unsaved-annotations");
+      if (!raw) return;
+      const backups: Array<Record<string, unknown>> = JSON.parse(raw);
+      if (!Array.isArray(backups) || backups.length === 0) return;
+
+      const remaining: Array<Record<string, unknown>> = [];
+      for (const backup of backups) {
+        try {
+          await annotationService.create({
+            screenshot_id: backup.screenshot_id as number,
+            hourly_values: (backup.hourly_values as Record<string, number>) || {},
+            extracted_title: (backup.extracted_title as string) || null,
+            extracted_total: (backup.extracted_total as string) || null,
+            grid_upper_left: backup.grid_upper_left as { x: number; y: number },
+            grid_lower_right: backup.grid_lower_right as { x: number; y: number },
+            notes: (backup.notes as string) || null,
+          });
+        } catch {
+          remaining.push(backup);
+        }
+      }
+
+      if (remaining.length === 0) {
+        localStorage.removeItem("unsaved-annotations");
+        console.log(`[Annotations] Recovered ${backups.length} unsaved annotation(s)`);
+      } else {
+        localStorage.setItem("unsaved-annotations", JSON.stringify(remaining));
+        console.warn(`[Annotations] ${remaining.length} annotation(s) still failed to save`);
+      }
+    } catch {
+      // localStorage parse error — clear corrupted data
+      localStorage.removeItem("unsaved-annotations");
     }
   },
 

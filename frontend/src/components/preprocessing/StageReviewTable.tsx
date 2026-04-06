@@ -78,6 +78,7 @@ interface RowProps {
 
 const TableRow = memo(function TableRow({
   screenshot,
+  stage,
   status,
   isException,
   event,

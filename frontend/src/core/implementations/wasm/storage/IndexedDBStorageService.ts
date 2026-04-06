@@ -596,6 +596,16 @@ export class IndexedDBStorageService implements IStorageService {
     }
   }
 
+  async getStorageEstimate(): Promise<{ usage: number; quota: number; percentUsed: number } | null> {
+    if (!navigator.storage?.estimate) return null;
+    const { usage, quota } = await navigator.storage.estimate();
+    return {
+      usage: usage ?? 0,
+      quota: quota ?? 0,
+      percentUsed: quota ? ((usage ?? 0) / quota) * 100 : 0,
+    };
+  }
+
   /**
    * Efficient paginated query using IndexedDB indexes.
    * Only loads the requested page instead of all screenshots.

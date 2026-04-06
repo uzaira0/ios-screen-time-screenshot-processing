@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useDropzone } from "react-dropzone";
+import toast from "react-hot-toast";
 import type { UploadFileItem } from "@/store/preprocessingStore";
 import { parseRelativePath, isImageFile } from "@/utils/filePathParser";
 import { FolderStructureHint } from "@/components/common/FolderStructureHint";
@@ -30,6 +31,12 @@ export const UploadDropZone = ({ onFilesSelected, compact }: UploadDropZoneProps
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
+    onDropRejected: (rejections) => {
+      for (const r of rejections) {
+        const reasons = r.errors.map((e) => e.message).join(", ");
+        toast.error(`${r.file.name}: ${reasons}`);
+      }
+    },
     accept: { "image/png": [".png"], "image/jpeg": [".jpg", ".jpeg"] },
     maxSize: 25 * 1024 * 1024, // 25 MB per file
     multiple: true,

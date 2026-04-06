@@ -61,6 +61,7 @@ export interface IPreprocessingService {
   getSummary(groupId: string): Promise<PreprocessingSummary>;
   runStage(stage: PreprocessingStage, options: RunStageOptions): Promise<RunStageResult>;
   resetStage(stage: PreprocessingStage, groupId: string): Promise<{ message: string; count?: number }>;
+  skipStage(stage: PreprocessingStage, groupId: string, screenshotIds?: number[], unskip?: boolean): Promise<{ message: string; count?: number }>;
   invalidateFromStage(screenshotId: number, stage: string): Promise<void>;
   getEventLog(screenshotId: number): Promise<PreprocessingEventLog>;
   getScreenshot(screenshotId: number): Promise<Screenshot | null>;
@@ -76,4 +77,8 @@ export interface IPreprocessingService {
   getImageUrl(screenshotId: number): Promise<string>;
   /** Force-stop any in-progress processing (terminates workers). No-op in server mode. */
   forceStop?(): void;
+  /** Reset any stages stuck in "running" status after a tab crash (WASM mode only). */
+  reconcileStuckStages?(): Promise<number>;
+  /** Estimate storage usage (WASM mode only). */
+  getStorageEstimate?(): Promise<{ usage: number; quota: number; percentUsed: number } | null>;
 }

@@ -48,6 +48,7 @@ export interface AnnotationSlice {
   setExtractedTitle: (title: string) => void;
   saveAnnotation: (notes?: string) => Promise<void>;
   loadConsensus: (screenshotId: number) => Promise<void>;
+  recoverUnsavedAnnotations: () => Promise<void>;
 }
 
 // ============================================================================
