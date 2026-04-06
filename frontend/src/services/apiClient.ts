@@ -674,6 +674,19 @@ export const api = {
       return response.json();
     },
 
+    async skipStage(stage: string, groupId: string, screenshotIds?: number[], unskip?: boolean) {
+      const response = await authFetch(
+        "/api/v1/screenshots/preprocess-stage/skip",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ stage, group_id: groupId, screenshot_ids: screenshotIds, unskip: unskip ?? false }),
+        },
+        "Failed to skip stage",
+      );
+      return response.json();
+    },
+
     async invalidateFromStage(screenshotId: number, stage: string) {
       const response = await authFetch(
         `/api/v1/screenshots/${screenshotId}/invalidate-from-stage`,

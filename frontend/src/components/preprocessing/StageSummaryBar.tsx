@@ -9,6 +9,7 @@ const FILTER_DEFS: { id: FilterMode; label: string; color: string }[] = [
   { id: "needs_review", label: "Needs Review", color: "text-yellow-700 bg-yellow-50" },
   { id: "invalidated", label: "Invalidated", color: "text-orange-700 bg-orange-50" },
   { id: "completed", label: "Completed", color: "text-green-700 bg-green-50" },
+  { id: "skipped", label: "Skipped", color: "text-purple-700 bg-purple-50" },
   { id: "pending", label: "Pending", color: "text-slate-500 bg-slate-50" },
 ];
 
@@ -24,6 +25,8 @@ export const StageSummaryBar = () => {
   const stageProgress = usePreprocessingStore((s) => s.stageProgress);
   const runStage = usePreprocessingStore((s) => s.runStage);
   const resetStage = usePreprocessingStore((s) => s.resetStage);
+  const skipStage = usePreprocessingStore((s) => s.skipStage);
+  const unskipStage = usePreprocessingStore((s) => s.unskipStage);
 
   const stopStage = usePreprocessingStore((s) => s.stopStage);
   const enterQueue = usePreprocessingStore((s) => s.enterQueue);
@@ -38,6 +41,7 @@ export const StageSummaryBar = () => {
     needs_review: counts.exceptions,
     invalidated: counts.invalidated,
     completed: counts.completed,
+    skipped: counts.skipped ?? 0,
     pending: counts.pending,
   };
 
@@ -140,6 +144,26 @@ export const StageSummaryBar = () => {
           className="ml-auto px-4 py-1.5 text-sm font-medium text-orange-700 bg-orange-50 border border-orange-200 rounded-md hover:bg-orange-100 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-800 dark:hover:bg-orange-900/30 transition-colors"
         >
           Reset {stageLabel} ({total - counts.pending})
+        </button>
+      )}
+
+      {/* Skip button — skip all eligible screenshots for this stage */}
+      {!isRunningStage && eligible > 0 && (
+        <button
+          onClick={() => skipStage(activeStage)}
+          className="px-4 py-1.5 text-sm font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-md hover:bg-purple-100 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-800 dark:hover:bg-purple-900/30 transition-colors"
+        >
+          Skip {stageLabel} ({eligible})
+        </button>
+      )}
+
+      {/* Unskip button — restore skipped screenshots to pending */}
+      {!isRunningStage && (counts.skipped ?? 0) > 0 && (
+        <button
+          onClick={() => unskipStage(activeStage)}
+          className="px-4 py-1.5 text-sm font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-md hover:bg-purple-100 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-800 dark:hover:bg-purple-900/30 transition-colors"
+        >
+          Unskip ({counts.skipped})
         </button>
       )}
 

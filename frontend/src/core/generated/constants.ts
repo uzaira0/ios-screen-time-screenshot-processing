@@ -1,6 +1,6 @@
 /**
  * AUTO-GENERATED from shared/*.json — do not edit manually.
- * Hash: f483e202e1d2bb6f
+ * Hash: a8dcfa6d057f9773
  * Regenerate: python scripts/generate-shared-constants.py
  */
 
@@ -57,19 +57,25 @@ export const PREPROCESSING_STAGES = ["device_detection", "cropping", "phi_detect
 export type PreprocessingStages = (typeof PREPROCESSING_STAGES)[number];
 export const PROCESSING_STATUSES = ["pending", "processing", "completed", "failed", "skipped", "deleted"] as const;
 export type ProcessingStatuses = (typeof PROCESSING_STATUSES)[number];
+export const ProcessingStatus = { PENDING: "pending" as const, PROCESSING: "processing" as const, COMPLETED: "completed" as const, FAILED: "failed" as const, SKIPPED: "skipped" as const, DELETED: "deleted" as const };
 export const ANNOTATION_STATUSES = ["pending", "annotated", "verified", "skipped"] as const;
 export type AnnotationStatuses = (typeof ANNOTATION_STATUSES)[number];
-export const STAGE_STATUSES = ["pending", "running", "completed", "failed", "invalidated", "cancelled"] as const;
+export const AnnotationStatus = { PENDING: "pending" as const, ANNOTATED: "annotated" as const, VERIFIED: "verified" as const, SKIPPED: "skipped" as const };
+export const STAGE_STATUSES = ["pending", "running", "completed", "skipped", "failed", "invalidated", "cancelled"] as const;
 export type StageStatuses = (typeof STAGE_STATUSES)[number];
+export const StageStatus = { PENDING: "pending" as const, RUNNING: "running" as const, COMPLETED: "completed" as const, SKIPPED: "skipped" as const, FAILED: "failed" as const, INVALIDATED: "invalidated" as const, CANCELLED: "cancelled" as const };
 export const PHI_REDACTION_METHODS = ["redbox", "blackbox", "pixelate"] as const;
 export type PhiRedactionMethods = (typeof PHI_REDACTION_METHODS)[number];
+export const PhiRedactionMethod = { REDBOX: "redbox" as const, BLACKBOX: "blackbox" as const, PIXELATE: "pixelate" as const };
 export const GRID_DETECTION_METHODS = ["line_based", "ocr_anchored"] as const;
 export type GridDetectionMethods = (typeof GRID_DETECTION_METHODS)[number];
+export const GridDetectionMethod = { LINE_BASED: "line_based" as const, OCR_ANCHORED: "ocr_anchored" as const };
 export const IMAGE_TYPES = ["screen_time", "battery"] as const;
 export type ImageTypes = (typeof IMAGE_TYPES)[number];
 export const USER_ROLES = ["admin", "annotator"] as const;
 export type UserRoles = (typeof USER_ROLES)[number];
+export const UserRole = { ADMIN: "admin" as const, ANNOTATOR: "annotator" as const };
 export const WEBSOCKET_EVENTS = ["annotation_submitted", "screenshot_completed", "consensus_disputed", "user_joined", "user_left"] as const;
 export type WebsocketEvents = (typeof WEBSOCKET_EVENTS)[number];
 
-export const SHARED_CONSTANTS_HASH = "f483e202e1d2bb6f";
+export const SHARED_CONSTANTS_HASH = "a8dcfa6d057f9773";

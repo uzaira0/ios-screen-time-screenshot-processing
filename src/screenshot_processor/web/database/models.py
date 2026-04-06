@@ -57,6 +57,7 @@ class StageStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    SKIPPED = "skipped"
     FAILED = "failed"
     INVALIDATED = "invalidated"
     CANCELLED = "cancelled"

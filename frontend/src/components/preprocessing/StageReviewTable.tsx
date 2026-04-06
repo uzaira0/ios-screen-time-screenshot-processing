@@ -4,6 +4,7 @@ import { usePreprocessingStore, useScreenshotImageUrl } from "@/hooks/usePreproc
 import type { Stage, StageStatus, PreprocessingEventData } from "@/store/preprocessingStore";
 import type { Screenshot } from "@/types";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { StageStatus as SS } from "@/core/generated/constants";
 
 type SortDirection = "asc" | "desc";
 
@@ -27,6 +28,7 @@ const STATUS_BADGES: Record<StageStatus, { label: string; classes: string }> = {
   pending: { label: "Pending", classes: "bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400" },
   running: { label: "Running", classes: "bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400" },
   failed: { label: "Failed", classes: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400" },
+  skipped: { label: "Skipped", classes: "bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400" },
   cancelled: { label: "Cancelled", classes: "bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400" },
 };
 
@@ -36,6 +38,7 @@ const STATUS_SORT_ORDER: Record<StageStatus, number> = {
   pending: 2,
   invalidated: 3,
   cancelled: 4,
+  skipped: 4.5,
   completed: 5,
 };
 
@@ -85,6 +88,8 @@ const TableRow = memo(function TableRow({
   renderResultColumns,
   imageVersion,
 }: RowProps) {
+  const skipStage = usePreprocessingStore((s) => s.skipStage);
+  const unskipStage = usePreprocessingStore((s) => s.unskipStage);
   const badge = STATUS_BADGES[status] ?? STATUS_BADGES.pending;
   const imageUrl = useScreenshotImageUrl(screenshot.id, "getImageUrl", undefined, imageVersion);
   const ppMeta = (screenshot.processing_metadata as Record<string, unknown>)?.preprocessing as Record<string, unknown> | undefined;
@@ -95,7 +100,7 @@ const TableRow = memo(function TableRow({
       className={`border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 ${
         isHighlighted ? "bg-primary-50 dark:bg-primary-900/20 ring-2 ring-primary-300" : ""
       } ${isException ? "bg-yellow-50 dark:bg-yellow-900/20" : ""} ${
-        status === "invalidated" ? "bg-orange-50/40 dark:bg-orange-900/20" : ""
+        status === SS.INVALIDATED ? "bg-orange-50/40 dark:bg-orange-900/20" : ""
       }`}
     >
       <td className="px-3 py-2">
@@ -130,10 +135,10 @@ const TableRow = memo(function TableRow({
           {isException && (
             <span className="text-yellow-500" title="Needs review">!</span>
           )}
-          {status === "invalidated" && (
+          {status === SS.INVALIDATED && (
             <span className="text-orange-400 text-xs" title="Upstream stage was re-run. Click Run to update.">(stale)</span>
           )}
-          {status === "running" && (
+          {status === SS.RUNNING && (
             <span className="inline-block w-3 h-3 border-2 border-slate-300 border-t-primary-500 rounded-full animate-spin" />
           )}
           {imageWriteFailed && (
@@ -151,14 +156,33 @@ const TableRow = memo(function TableRow({
       </td>
       {renderResultColumns(screenshot, event)}
       <td className="px-3 py-2">
-        <button
-          onClick={() => onLoadLog(screenshot.id)}
-          className="px-2 py-1 text-xs text-slate-500 dark:text-slate-400 hover:text-primary-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
-          title="View event log"
-          aria-label={`View event log for screenshot ${screenshot.id}`}
-        >
-          Log
-        </button>
+        <div className="flex gap-1">
+          {status === SS.SKIPPED ? (
+            <button
+              onClick={() => unskipStage(stage, [screenshot.id])}
+              className="px-2 py-1 text-xs text-purple-600 hover:text-purple-800 hover:bg-purple-50 dark:hover:bg-purple-900/30 rounded"
+              title="Unskip this screenshot"
+            >
+              Unskip
+            </button>
+          ) : (status === SS.PENDING || status === SS.FAILED || status === SS.INVALIDATED || status === SS.CANCELLED) ? (
+            <button
+              onClick={() => skipStage(stage, [screenshot.id])}
+              className="px-2 py-1 text-xs text-purple-600 hover:text-purple-800 hover:bg-purple-50 dark:hover:bg-purple-900/30 rounded"
+              title="Skip this stage for this screenshot"
+            >
+              Skip
+            </button>
+          ) : null}
+          <button
+            onClick={() => onLoadLog(screenshot.id)}
+            className="px-2 py-1 text-xs text-slate-500 dark:text-slate-400 hover:text-primary-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+            title="View event log"
+            aria-label={`View event log for screenshot ${screenshot.id}`}
+          >
+            Log
+          </button>
+        </div>
       </td>
     </tr>
   );
@@ -199,9 +223,10 @@ export const StageReviewTable = ({
       filtered = allScreenshots.filter((s) => {
         const status = getScreenshotStageStatus(s, stage);
         switch (filter) {
-          case "completed": return status === "completed";
-          case "pending": return status === "pending";
-          case "invalidated": return status === "invalidated";
+          case "completed": return status === SS.COMPLETED;
+          case "pending": return status === SS.PENDING;
+          case "skipped": return status === SS.SKIPPED;
+          case "invalidated": return status === SS.INVALIDATED;
           case "needs_review": return isScreenshotException(s, stage);
           default: return true;
         }

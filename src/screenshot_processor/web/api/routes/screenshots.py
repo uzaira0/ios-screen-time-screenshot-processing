@@ -77,6 +77,7 @@ from screenshot_processor.web.database import (
     ScreenshotUpdate,
     ScreenshotUploadRequest,
     ScreenshotUploadResponse,
+    SkipStageRequest,
     StagePreprocessRequest,
     StagePreprocessResponse,
     StageStatus,
@@ -1980,8 +1981,8 @@ async def _get_eligible_screenshot_ids(
         stage_status = statuses.get(stage, StageStatus.PENDING)
         if stage_status not in (StageStatus.PENDING, StageStatus.INVALIDATED, StageStatus.FAILED, StageStatus.CANCELLED):
             continue
-        # Check all prerequisite stages are completed
-        if all(statuses.get(prereq, StageStatus.PENDING) == StageStatus.COMPLETED for prereq in prerequisite_stages):
+        # Check all prerequisite stages are completed (or skipped)
+        if all(statuses.get(prereq, StageStatus.PENDING) in (StageStatus.COMPLETED, StageStatus.SKIPPED) for prereq in prerequisite_stages):
             eligible.append(s.id)
     return eligible
 
@@ -2041,6 +2042,72 @@ async def reset_stage(
         screenshot_ids=reset_ids,
         stage=stage,
         message=f"Reset {len(reset_ids)} screenshots to pending for {stage}",
+    )
+
+
+@router.post("/preprocess-stage/skip", response_model=StagePreprocessResponse)
+async def skip_stage(
+    request: SkipStageRequest,
+    db: DatabaseSession,
+    repo: ScreenshotRepo,
+    current_user: CurrentUser,
+):
+    """Skip or unskip a preprocessing stage for screenshots.
+
+    Skipped stages are treated as completed for prerequisite checks,
+    allowing downstream stages to proceed. Does NOT invalidate downstream.
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from screenshot_processor.web.services.preprocessing_service import (
+        STAGE_ORDER,
+        init_preprocessing_metadata,
+    )
+
+    stage = request.stage
+    if not stage or stage not in STAGE_ORDER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"stage must be one of: {STAGE_ORDER}",
+        )
+    if not request.screenshot_ids and not request.group_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="group_id or screenshot_ids required")
+
+    screenshots = await repo.get_by_ids_or_group(screenshot_ids=request.screenshot_ids, group_id=request.group_id)
+
+    affected_ids = []
+    for s in screenshots:
+        # Read current status without initializing metadata (avoid side effects on non-matching screenshots)
+        pp = (s.processing_metadata or {}).get("preprocessing", {})
+        current = pp.get("stage_status", {}).get(stage, StageStatus.PENDING)
+
+        should_modify = False
+        if request.unskip:
+            should_modify = current == StageStatus.SKIPPED
+        else:
+            should_modify = current in (StageStatus.PENDING, StageStatus.INVALIDATED, StageStatus.FAILED, StageStatus.CANCELLED)
+
+        if should_modify:
+            # Only initialize metadata for screenshots we're actually modifying
+            pp = init_preprocessing_metadata(s)
+            new_status = StageStatus.PENDING if request.unskip else StageStatus.SKIPPED
+            pp["stage_status"][stage] = new_status
+            flag_modified(s, "processing_metadata")
+            affected_ids.append(s.id)
+
+    if affected_ids:
+        await db.commit()
+
+    action = "unskipped" if request.unskip else "skipped"
+    logger.info(
+        f"Stage {action}",
+        extra={"stage": stage, "count": len(affected_ids), "username": current_user.username},
+    )
+    return StagePreprocessResponse(
+        queued_count=0,
+        screenshot_ids=affected_ids,
+        stage=stage,
+        message=f"{action.capitalize()} {len(affected_ids)} screenshots for {stage}",
     )
 
 

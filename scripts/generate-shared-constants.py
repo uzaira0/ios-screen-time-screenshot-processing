@@ -215,8 +215,14 @@ def generate_typescript(data: dict, hash_val: str) -> str:
             lines.append(f"export const {const_name} = {json.dumps(values)} as const;")
             # Also generate a union type
             type_name = "".join(word.capitalize() for word in name.split("_"))
-            union = " | ".join(f'"{v}"' for v in values)
             lines.append(f"export type {type_name} = (typeof {const_name})[number];")
+            # Also generate an enum-style constant object for statuses/roles
+            # Named after the enum: StageStatus, ProcessingStatus, etc.
+            if name.endswith("_statuses") or name.endswith("_roles") or name.endswith("_methods"):
+                # StageStatuses -> StageStatus, PhiRedactionMethods -> PhiRedactionMethod
+                obj_name = type_name[:-2] if type_name.endswith("es") and not type_name.endswith("les") else type_name[:-1]
+                obj_entries = ", ".join(f'{v.upper()}: "{v}" as const' for v in values)
+                lines.append(f"export const {obj_name} = {{ {obj_entries} }};")
         lines.append("")
 
     lines.append(f'export const SHARED_CONSTANTS_HASH = "{hash_val}";')

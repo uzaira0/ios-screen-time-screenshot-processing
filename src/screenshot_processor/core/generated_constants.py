@@ -1,6 +1,6 @@
 """
 AUTO-GENERATED from shared/*.json — do not edit manually.
-Hash: f483e202e1d2bb6f
+Hash: a8dcfa6d057f9773
 Regenerate: python scripts/generate-shared-constants.py
 """
 
@@ -70,11 +70,11 @@ EXPORT_CSV_HEADERS: list[str] = ["Screenshot ID", "Filename", "Original Filepath
 PREPROCESSING_STAGES: list[str] = ["device_detection", "cropping", "phi_detection", "phi_redaction", "ocr"]
 PROCESSING_STATUSES: list[str] = ["pending", "processing", "completed", "failed", "skipped", "deleted"]
 ANNOTATION_STATUSES: list[str] = ["pending", "annotated", "verified", "skipped"]
-STAGE_STATUSES: list[str] = ["pending", "running", "completed", "failed", "invalidated", "cancelled"]
+STAGE_STATUSES: list[str] = ["pending", "running", "completed", "skipped", "failed", "invalidated", "cancelled"]
 PHI_REDACTION_METHODS: list[str] = ["redbox", "blackbox", "pixelate"]
 GRID_DETECTION_METHODS: list[str] = ["line_based", "ocr_anchored"]
 IMAGE_TYPES: list[str] = ["screen_time", "battery"]
 USER_ROLES: list[str] = ["admin", "annotator"]
 WEBSOCKET_EVENTS: list[str] = ["annotation_submitted", "screenshot_completed", "consensus_disputed", "user_joined", "user_left"]
 
-SHARED_CONSTANTS_HASH: str = "f483e202e1d2bb6f"
+SHARED_CONSTANTS_HASH: str = "a8dcfa6d057f9773"

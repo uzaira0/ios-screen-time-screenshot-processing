@@ -1,5 +1,5 @@
 //! AUTO-GENERATED from shared/*.json — do not edit manually.
-//! Hash: f483e202e1d2bb6f
+//! Hash: a8dcfa6d057f9773
 //! Regenerate: python scripts/generate-shared-constants.py
 
 use std::collections::HashMap;
@@ -58,4 +58,4 @@ pub const COLOR_MIN_SATURATION: u8 = 50;
 pub const COLOR_MIN_VALUE: u8 = 50;
 pub const MIN_BLUE_RATIO: f64 = 0.5;
 
-pub const SHARED_CONSTANTS_HASH: &str = "f483e202e1d2bb6f";
+pub const SHARED_CONSTANTS_HASH: &str = "a8dcfa6d057f9773";

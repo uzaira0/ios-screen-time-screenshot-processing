@@ -47,6 +47,10 @@ export class ServerPreprocessingService implements IPreprocessingService {
     return api.preprocessing.resetStage(stage, groupId) as Promise<{ message: string; count?: number }>;
   }
 
+  async skipStage(stage: PreprocessingStage, groupId: string, screenshotIds?: number[], unskip?: boolean): Promise<{ message: string; count?: number }> {
+    return api.preprocessing.skipStage(stage, groupId, screenshotIds, unskip) as Promise<{ message: string; count?: number }>;
+  }
+
   async invalidateFromStage(screenshotId: number, stage: string): Promise<void> {
     await api.preprocessing.invalidateFromStage(screenshotId, stage);
   }

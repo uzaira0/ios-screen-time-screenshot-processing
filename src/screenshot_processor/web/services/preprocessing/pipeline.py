@@ -540,7 +540,7 @@ def get_next_version(screenshot: Any, stage: str) -> int:
 
 def get_stage_counts(screenshots: list, stage: str) -> dict:
     """Compute per-status counts for a stage across a list of screenshots."""
-    counts = {"completed": 0, "pending": 0, "invalidated": 0, "running": 0, "failed": 0, "cancelled": 0, "exceptions": 0}
+    counts = {"completed": 0, "pending": 0, "skipped": 0, "invalidated": 0, "running": 0, "failed": 0, "cancelled": 0, "exceptions": 0}
     for s in screenshots:
         pp = (s.processing_metadata or {}).get("preprocessing", {})
         status = pp.get("stage_status", {}).get(stage, "pending")
@@ -571,7 +571,7 @@ def get_stage_counts_from_metadata(rows: list, stage: str) -> dict:
     Like get_stage_counts but works with raw column tuples instead of ORM objects,
     avoiding the need to load full Screenshot objects.
     """
-    counts = {"completed": 0, "pending": 0, "invalidated": 0, "running": 0, "failed": 0, "cancelled": 0, "exceptions": 0}
+    counts = {"completed": 0, "pending": 0, "skipped": 0, "invalidated": 0, "running": 0, "failed": 0, "cancelled": 0, "exceptions": 0}
     for row in rows:
         metadata, hourly_data, ocr_total = row[0], row[1], row[2]
         pp = (metadata or {}).get("preprocessing", {})

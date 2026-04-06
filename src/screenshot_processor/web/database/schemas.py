@@ -667,6 +667,12 @@ class OCRStageRequest(StagePreprocessRequest):
     max_shift: int = Field(default=5, description="Max boundary shift for grid optimization")
 
 
+class SkipStageRequest(StagePreprocessRequest):
+    """Request to skip or unskip a preprocessing stage."""
+
+    unskip: bool = Field(default=False, description="If true, revert skipped back to pending")
+
+
 class StagePreprocessResponse(BaseModel):
     """Response from a stage preprocessing request."""
 
@@ -715,6 +721,7 @@ class PreprocessingStageSummary(BaseModel):
 
     completed: int = 0
     pending: int = 0
+    skipped: int = 0
     invalidated: int = 0
     running: int = 0
     failed: int = 0

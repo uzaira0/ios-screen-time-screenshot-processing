@@ -683,6 +683,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/screenshots/preprocess-stage/skip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Skip Stage
+         * @description Skip or unskip a preprocessing stage for screenshots.
+         *
+         *     Skipped stages are treated as completed for prerequisite checks,
+         *     allowing downstream stages to proceed. Does NOT invalidate downstream.
+         */
+        post: operations["skip_stage_api_v1_screenshots_preprocess_stage_skip_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/screenshots/preprocess-stage/device-detection": {
         parameters: {
             query?: never;
@@ -2716,6 +2739,11 @@ export interface components {
              */
             pending: number;
             /**
+             * Skipped
+             * @default 0
+             */
+            skipped: number;
+            /**
              * Invalidated
              * @default 0
              */
@@ -3451,6 +3479,38 @@ export interface components {
             expires_in_seconds: number;
         };
         /**
+         * SkipStageRequest
+         * @description Request to skip or unskip a preprocessing stage.
+         */
+        SkipStageRequest: {
+            /**
+             * Screenshot Ids
+             * @description Specific screenshot IDs. If None, all eligible in group.
+             */
+            screenshot_ids?: number[] | null;
+            /**
+             * Group Id
+             * @description Required if screenshot_ids is None.
+             */
+            group_id?: string | null;
+            /**
+             * Stage
+             * @description Stage name (used by reset endpoint).
+             */
+            stage?: string | null;
+            /**
+             * Task Ids
+             * @description Celery task IDs to cancel (used by cancel endpoint).
+             */
+            task_ids?: string[];
+            /**
+             * Unskip
+             * @description If true, revert skipped back to pending
+             * @default false
+             */
+            unskip: boolean;
+        };
+        /**
          * StagePreprocessRequest
          * @description Request to run a single preprocessing stage on a batch.
          */
@@ -4047,6 +4107,8 @@ export interface operations {
                 verified_by_others?: boolean | null;
                 /** @description Search by ID or participant ID */
                 search?: string | null;
+                /** @description Filter for screenshots where bar total differs from OCR total (True=mismatch only) */
+                totals_mismatch?: boolean | null;
                 /** @description Sort field: id, uploaded_at, processing_status */
                 sort_by?: string;
                 /** @description Sort order: asc, desc */
@@ -4441,6 +4503,8 @@ export interface operations {
                 verified_by_me?: boolean | null;
                 /** @description Filter for screenshots verified by others but not current user (True only) */
                 verified_by_others?: boolean | null;
+                /** @description Filter for screenshots where bar total differs from OCR total */
+                totals_mismatch?: boolean | null;
                 /** @description Direction: current, next, prev */
                 direction?: string;
             };
@@ -4805,6 +4869,42 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["StagePreprocessRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StagePreprocessResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    skip_stage_api_v1_screenshots_preprocess_stage_skip_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Username"?: string | null;
+                "X-Site-Password"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkipStageRequest"];
             };
         };
         responses: {

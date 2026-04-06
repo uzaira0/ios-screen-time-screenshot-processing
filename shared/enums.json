@@ -3,7 +3,7 @@
   "preprocessing_stages": ["device_detection", "cropping", "phi_detection", "phi_redaction", "ocr"],
   "processing_statuses": ["pending", "processing", "completed", "failed", "skipped", "deleted"],
   "annotation_statuses": ["pending", "annotated", "verified", "skipped"],
-  "stage_statuses": ["pending", "running", "completed", "failed", "invalidated", "cancelled"],
+  "stage_statuses": ["pending", "running", "completed", "skipped", "failed", "invalidated", "cancelled"],
   "phi_redaction_methods": ["redbox", "blackbox", "pixelate"],
   "grid_detection_methods": ["line_based", "ocr_anchored"],
   "image_types": ["screen_time", "battery"],
