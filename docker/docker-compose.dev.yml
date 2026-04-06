@@ -2,7 +2,7 @@
 #
 # This configuration provides:
 # - PostgreSQL database
-# - Redis for Celery (optional)
+# - Workflow worker for preprocessing pipeline
 # - Backend API with auto-reload
 # - Frontend with Vite HMR (Hot Module Replacement)
 #
@@ -19,7 +19,6 @@
 #
 # PORTS (to avoid conflicts with other projects):
 #   PostgreSQL: 5436
-#   Redis: 6382
 #   Backend API: 8002
 #   Frontend: 5175
 
@@ -59,18 +58,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    container_name: ios-screen-time-screenshot-processing-redis-dev
-    ports:
-      - "127.0.0.1:6382:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
   # ==========================================================================
   # Backend API (with hot reload)
   # ==========================================================================
@@ -95,8 +82,6 @@ services:
       - ${SCREENSHOT_SOURCE_PATH:-../screenshots}:/app/screenshots:ro
     environment:
       DATABASE_URL: postgresql+asyncpg://ios_screen_time_screenshot:${POSTGRES_PASSWORD:-ios_screen_time_screenshot}@postgres:5432/ios_screen_time_screenshot_processing
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-minimum-32-characters-long}
       UPLOAD_API_KEY: ${UPLOAD_API_KEY:-dev-upload-key-change-in-production}
       PYTHONUNBUFFERED: 1
@@ -118,8 +103,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     restart: unless-stopped
     networks:
       - default
@@ -134,61 +117,21 @@ services:
       - "traefik.http.routers.ios-screen-time-screenshot-processing-api.middlewares=ios-screen-time-screenshot-processing-api-strip"
 
   # ==========================================================================
-  # Celery Worker (with hot reload)
+  # Workflow Worker (preprocessing pipeline)
   # ==========================================================================
 
-  # Slow worker: PHI detection + preprocessing (CPU-bound, long-running OCR)
-  celery-worker:
+  workflow-worker:
     build:
       context: ..
       dockerfile: docker/backend/Dockerfile.dev
-    container_name: ios-screen-time-screenshot-processing-celery-dev
-    command: celery -A src.screenshot_processor.web.celery_app worker --loglevel=info --concurrency=2 --queues=default
-    # Override Dockerfile healthcheck - Celery workers don't serve HTTP
+    container_name: ios-screen-time-screenshot-processing-worker-dev
+    command: python -m src.screenshot_processor.workflows.worker_main --concurrency=4
     healthcheck:
-      test: ["CMD-SHELL", "celery -A src.screenshot_processor.web.celery_app inspect ping"]
+      test: ["CMD-SHELL", "python -c 'print(\"ok\")'"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    volumes:
-      # Mount source code for hot reloading
-      - ../src:/app/src:ro
-      # Persistent data directories (production volumes)
-      - uploads_data:/app/uploads
-      - output_data:/app/output
-      - ../db:/app/db
-      - ../debug:/app/debug
-      - ${SCREENSHOT_SOURCE_PATH:-../screenshots}:/app/screenshots:ro
-    environment:
-      DATABASE_URL: postgresql+asyncpg://ios_screen_time_screenshot:${POSTGRES_PASSWORD:-ios_screen_time_screenshot}@postgres:5432/ios_screen_time_screenshot_processing
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
-      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-minimum-32-characters-long}
-      PYTHONUNBUFFERED: 1
-      USE_FRACTIONAL_HOURLY_VALUES: "false"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      backend:
-        condition: service_started
-    restart: unless-stopped
-
-  # Fast worker: redaction, OCR, device detection, cropping (milliseconds each)
-  celery-worker-fast:
-    build:
-      context: ..
-      dockerfile: docker/backend/Dockerfile.dev
-    container_name: ios-screen-time-screenshot-processing-celery-fast-dev
-    command: celery -A src.screenshot_processor.web.celery_app worker --loglevel=info --concurrency=4 --queues=fast --hostname=fast@%h
-    healthcheck:
-      test: ["CMD-SHELL", "celery -A src.screenshot_processor.web.celery_app inspect ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      start_period: 10s
     volumes:
       - ../src:/app/src:ro
       - uploads_data:/app/uploads
@@ -198,15 +141,11 @@ services:
       - ${SCREENSHOT_SOURCE_PATH:-../screenshots}:/app/screenshots:ro
     environment:
       DATABASE_URL: postgresql+asyncpg://ios_screen_time_screenshot:${POSTGRES_PASSWORD:-ios_screen_time_screenshot}@postgres:5432/ios_screen_time_screenshot_processing
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-minimum-32-characters-long}
       PYTHONUNBUFFERED: 1
       USE_FRACTIONAL_HOURLY_VALUES: "false"
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       backend:
         condition: service_started

@@ -47,8 +47,6 @@ web = [
     "passlib[bcrypt]>=1.7.4",
     "python-multipart>=0.0.9",
     "opencv-python-headless>=4.8.0",
-    "celery[redis]>=5.3.0",
-    "redis>=5.0.0",
     "aiofiles>=24.1.0",
     # Note: slowapi replaced by fastapi-ratelimit from monorepo packages
 ]
