@@ -388,18 +388,14 @@ async def bulk_reprocess_screenshots(
                 message="No screenshots found to reprocess",
             )
 
-        # Queue Celery tasks for each screenshot (non-blocking)
-        from celery import group as celery_group
+        # Queue workflows for each screenshot
+        from screenshot_processor.web.services.workflow_service import create_redaction_workflows_batch
 
-        from screenshot_processor.web.tasks import reprocess_screenshot_task
-
-        task_group = celery_group(
-            reprocess_screenshot_task.s(sid, processing_method, max_shift) for sid in screenshot_ids
-        )
-        task_group.apply_async()
+        await create_redaction_workflows_batch(db, screenshot_ids)
+        await db.commit()
 
         logger.info(
-            "Admin queued bulk reprocess via Celery",
+            "Admin queued bulk reprocess via workflow engine",
             extra={
                 "audit": True,
                 "admin_username": admin.username,
@@ -476,15 +472,13 @@ async def retry_stuck_screenshots(
 
         requeued = 0
         if screenshot_ids:
-            from celery import group as celery_group
+            from screenshot_processor.web.services.workflow_service import create_preprocessing_workflows_batch
 
-            from screenshot_processor.web.tasks import process_screenshot_task
-
-            task_group = celery_group(process_screenshot_task.s(sid) for sid in screenshot_ids)
-            task_group.apply_async()
+            await create_preprocessing_workflows_batch(db, screenshot_ids)
+            await db.commit()
             requeued = len(screenshot_ids)
 
-            logger.info("Requeued PENDING screenshots to Celery", extra={"count": requeued})
+            logger.info("Requeued PENDING screenshots via workflow engine", extra={"count": requeued})
 
         logger.info(
             "Admin retried stuck screenshots",

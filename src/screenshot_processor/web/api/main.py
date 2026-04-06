@@ -192,22 +192,9 @@ async def health_check(db: AsyncSession = Depends(get_db), include_celery: bool 
         health_status = "unhealthy"
         checks_dict["database"] = f"error: {e!s}"
 
-    # Optional Celery health check
+    # Optional workflow worker health check
     if include_celery:
-        try:
-            from screenshot_processor.web.celery_app import celery_app
-
-            # Ping Celery workers with short timeout
-            inspect = celery_app.control.inspect(timeout=2.0)
-            active_workers = inspect.active()
-            if active_workers:
-                checks_dict["celery"] = f"ok ({len(active_workers)} workers)"
-            else:
-                checks_dict["celery"] = "no workers available"
-                # Don't mark unhealthy - Celery may be optional
-        except Exception as e:
-            logger.warning("Health check - celery error", extra={"error": str(e)})
-            checks_dict["celery"] = f"error: {e!s}"
+        checks_dict["workflow_worker"] = "health check not yet implemented"
 
     # Return appropriate status code
     status_code = 200 if health_status == "healthy" else 503

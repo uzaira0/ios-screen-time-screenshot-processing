@@ -1315,27 +1315,21 @@ async def _process_single_upload(
         _raise_upload_error(UploadErrorCode.DATABASE_ERROR, f"Failed to create screenshot record: {e}")
     timings["db_insert"] = (time.perf_counter() - t1) * 1000
 
-    # Queue background processing via Celery (fire and forget)
+    # Queue background processing via workflow engine
     t1 = time.perf_counter()
     processing_queued = False
     preprocessing_queued = False
     try:
-        if ctx.preprocess:
-            from screenshot_processor.web.tasks import preprocess_screenshot_task
+        from screenshot_processor.web.services.workflow_service import create_preprocessing_workflow
 
-            preprocess_screenshot_task.delay(screenshot_id)  # type: ignore[attr-defined]
-            preprocessing_queued = True
-            processing_queued = True  # preprocessing chains into OCR processing
-        else:
-            from screenshot_processor.web.tasks import process_screenshot_task
-
-            process_screenshot_task.delay(screenshot_id)  # type: ignore[attr-defined]
-            processing_queued = True
+        await create_preprocessing_workflow(db, screenshot_id)
+        await db.commit()
+        preprocessing_queued = True
+        processing_queued = True
     except Exception as e:
-        # processing_queued is already False from line 1315, but be explicit
         processing_queued = False
         logger.error("Failed to queue processing", extra={"screenshot_id": screenshot_id, "error": str(e)})
-    timings["celery_queue"] = (time.perf_counter() - t1) * 1000
+    timings["workflow_queue"] = (time.perf_counter() - t1) * 1000
 
     total_ms = (time.perf_counter() - t0) * 1000
     if total_ms > 100:  # Log slow uploads at INFO level
@@ -1348,7 +1342,7 @@ async def _process_single_upload(
             f"Upload {screenshot_id} timing: total={total_ms:.1f}ms "
             f"hash={timings.get('hash', 0):.1f}ms "
             f"file={timings.get('file_write', 0):.1f}ms db={timings.get('db_insert', 0):.1f}ms "
-            f"celery={timings.get('celery_queue', 0):.1f}ms"
+            f"queue={timings.get('workflow_queue', 0):.1f}ms"
         )
 
     return ScreenshotUploadResponse(
@@ -1761,36 +1755,28 @@ async def upload_screenshots_batch(
             # Queue ALL screenshots for processing (including duplicates which are now reset)
             screenshot_ids_to_queue.append(screenshot_id)
 
-    # Queue all Celery tasks at once using group for efficiency
+    # Queue all workflow tasks at once
     if screenshot_ids_to_queue:
         try:
-            from celery import group
-
             if batch_request.preprocess:
-                from screenshot_processor.web.tasks import preprocess_screenshot_task
+                from screenshot_processor.web.services.workflow_service import create_preprocessing_workflows_batch
 
-                task_group = group(
-                    preprocess_screenshot_task.s(sid)
-                    for sid in screenshot_ids_to_queue  # type: ignore[attr-defined]
-                )
+                await create_preprocessing_workflows_batch(db, screenshot_ids_to_queue)
             else:
-                from screenshot_processor.web.tasks import process_screenshot_task
+                from screenshot_processor.web.services.workflow_service import create_preprocessing_workflows_batch
 
-                task_group = group(
-                    process_screenshot_task.s(sid)
-                    for sid in screenshot_ids_to_queue  # type: ignore[attr-defined]
-                )
-            task_group.apply_async()
+                await create_preprocessing_workflows_batch(db, screenshot_ids_to_queue)
+            await db.commit()
         except Exception as e:
             logger.error("Failed to queue processing tasks for batch upload", extra={"error": str(e)})
 
-    timings["celery_queue"] = (time.perf_counter() - t1) * 1000
+    timings["workflow_queue"] = (time.perf_counter() - t1) * 1000
 
     total_ms = (time.perf_counter() - t_start) * 1000
     logger.info(
         f"Batch upload timing: total={total_ms:.1f}ms "
         f"decode={timings.get('decode', 0):.1f}ms file={timings.get('file_write', 0):.1f}ms "
-        f"db={timings.get('db_insert', 0):.1f}ms celery={timings.get('celery_queue', 0):.1f}ms"
+        f"db={timings.get('db_insert', 0):.1f}ms queue={timings.get('workflow_queue', 0):.1f}ms"
     )
 
     # Count results (filter out None values first)
@@ -1858,17 +1844,10 @@ async def preprocess_screenshot(
     await get_screenshot_or_404(repo, screenshot_id)
 
     try:
-        from screenshot_processor.web.tasks import preprocess_screenshot_task
+        from screenshot_processor.web.services.workflow_service import create_preprocessing_workflow
 
-        preprocess_screenshot_task.delay(
-            screenshot_id,
-            phi_pipeline_preset=preprocess_request.phi_pipeline_preset,
-            phi_redaction_method=preprocess_request.phi_redaction_method,
-            phi_detection_enabled=preprocess_request.phi_detection_enabled,
-            phi_ocr_engine=preprocess_request.phi_ocr_engine,
-            phi_ner_detector=preprocess_request.phi_ner_detector,
-            run_ocr_after=preprocess_request.run_ocr_after,
-        )
+        await create_preprocessing_workflow(db, screenshot_id)
+        await db.commit()
 
         logger.info("Preprocessing queued", extra={"screenshot_id": screenshot_id, "username": current_user.username})
         return BatchPreprocessResponse(
@@ -1890,6 +1869,7 @@ async def preprocess_screenshot(
 @router.post("/preprocess-batch", response_model=BatchPreprocessResponse)
 async def preprocess_screenshots_batch(
     batch_request: BatchPreprocessRequest,
+    db: DatabaseSession,
     repo: ScreenshotRepo,
     current_user: CurrentUser,
 ):
@@ -1907,23 +1887,10 @@ async def preprocess_screenshots_batch(
         )
 
     try:
-        from celery import group as celery_group
+        from screenshot_processor.web.services.workflow_service import create_preprocessing_workflows_batch
 
-        from screenshot_processor.web.tasks import preprocess_screenshot_task
-
-        task_group = celery_group(
-            preprocess_screenshot_task.s(
-                sid,
-                phi_pipeline_preset=batch_request.phi_pipeline_preset,
-                phi_redaction_method=batch_request.phi_redaction_method,
-                phi_detection_enabled=batch_request.phi_detection_enabled,
-                phi_ocr_engine=batch_request.phi_ocr_engine,
-                phi_ner_detector=batch_request.phi_ner_detector,
-                run_ocr_after=batch_request.run_ocr_after,
-            )
-            for sid in screenshot_ids
-        )
-        task_group.apply_async()
+        await create_preprocessing_workflows_batch(db, screenshot_ids)
+        await db.commit()
 
         logger.info(
             f"Batch preprocessing queued: group={batch_request.group_id}, "
@@ -2335,23 +2302,10 @@ async def run_phi_detection_stage(
             message="No eligible screenshots for PHI detection",
         )
 
-    from screenshot_processor.web.tasks import phi_detection_task
+    from screenshot_processor.web.services.workflow_service import create_preprocessing_workflows_batch
 
-    task_results = [
-        phi_detection_task.apply_async(
-            args=[sid],
-            kwargs={
-                "preset": request.phi_pipeline_preset,
-                "ocr_engine": request.phi_ocr_engine,
-                "ner_detector": request.phi_ner_detector,
-                "llm_endpoint": request.llm_endpoint,
-                "llm_model": request.llm_model,
-                "llm_api_key": request.llm_api_key,
-            },
-        )
-        for sid in ids
-    ]
-    task_ids = [r.id for r in task_results]
+    wf_ids = await create_preprocessing_workflows_batch(db, ids)
+    await db.commit()
 
     logger.info("PHI detection queued", extra={"count": len(ids), "username": current_user.username})
     return StagePreprocessResponse(
@@ -2359,7 +2313,6 @@ async def run_phi_detection_stage(
         screenshot_ids=ids,
         stage="phi_detection",
         message=f"PHI detection queued for {len(ids)} screenshots",
-        task_ids=task_ids,
     )
 
 
@@ -2370,72 +2323,38 @@ async def cancel_phi_detection_stage(
     repo: ScreenshotRepo,
     current_user: CurrentUser,
 ):
-    """Revoke queued/running PHI detection tasks and reset affected screenshots to pending.
+    """Cancel running/pending preprocessing workflows for screenshots in the group."""
+    from screenshot_processor.web.services.workflow_service import cancel_workflow
+    from screenshot_processor.workflows.engine.models import WorkflowExecution
+    from screenshot_processor.workflows.engine.types import WorkflowStatus
 
-    Accepts task_ids (from the original dispatch response) to revoke specific tasks.
-    Also resets any screenshots in the group that are still marked 'running' back to
-    'pending' so they can be re-queued.
-    """
-    from sqlalchemy.orm.attributes import flag_modified
+    cancelled_ids: list[int] = []
 
-    from screenshot_processor.web.celery_app import celery_app
-    from screenshot_processor.web.services.preprocessing_service import (
-        init_preprocessing_metadata,
-    )
-
-    # Step 1: Find and revoke/kill phi_detection tasks specifically.
-    # Do NOT use celery_app.control.purge() — it destroys ALL queued tasks across all stages.
-    killed_ids: list[str] = []
-    revoked_ids: list[str] = []
-    try:
-        inspector = celery_app.control.inspect(timeout=2.0)
-        # Revoke queued (reserved) PHI tasks — prevents them from starting
-        reserved = inspector.reserved() or {}
-        for worker_tasks in reserved.values():
-            for task in worker_tasks:
-                if "phi_detection_task" in task.get("name", ""):
-                    revoked_ids.append(task["id"])
-        if revoked_ids:
-            celery_app.control.revoke(revoked_ids)
-        # Kill actively running PHI tasks
-        active = inspector.active() or {}
-        for worker_tasks in active.values():
-            for task in worker_tasks:
-                if "phi_detection_task" in task.get("name", ""):
-                    killed_ids.append(task["id"])
-        if killed_ids:
-            celery_app.control.revoke(killed_ids, terminate=True, signal="SIGKILL")
-            logger.info(
-                "Active PHI detection tasks killed",
-                extra={"count": len(killed_ids), "username": current_user.username},
-            )
-    except Exception as e:
-        logger.warning("Failed to inspect/kill active tasks", extra={"error": str(e)})
-
-    # Step 3: Mark all pending/running phi_detection screenshots as "cancelled"
-    # so that any task that somehow still executes will discard its results.
-    # Note: "cancelled" is distinct from "invalidated" (which means upstream re-run).
-    reset_ids: list[int] = []
     if request.group_id or request.screenshot_ids:
         screenshots = await repo.get_by_ids_or_group(
             screenshot_ids=request.screenshot_ids, group_id=request.group_id
         )
-        for s in screenshots:
-            pp = init_preprocessing_metadata(s)
-            status = pp.get("stage_status", {}).get("phi_detection")
-            if status in (StageStatus.PENDING, StageStatus.RUNNING):
-                pp["stage_status"]["phi_detection"] = StageStatus.CANCELLED
-                pp["current_events"]["phi_detection"] = None
-                flag_modified(s, "processing_metadata")
-                reset_ids.append(s.id)
-        if reset_ids:
+        screenshot_ids = [s.id for s in screenshots]
+
+        # Find active workflows for these screenshots and cancel them
+        from sqlalchemy import select as sa_select
+        result = await db.execute(
+            sa_select(WorkflowExecution)
+            .where(WorkflowExecution.screenshot_id.in_(screenshot_ids))
+            .where(WorkflowExecution.status.in_([WorkflowStatus.PENDING, WorkflowStatus.RUNNING]))
+        )
+        for wf in result.scalars().all():
+            await cancel_workflow(db, wf.id)
+            cancelled_ids.append(wf.screenshot_id)
+
+        if cancelled_ids:
             await db.commit()
 
     return StagePreprocessResponse(
         queued_count=0,
-        screenshot_ids=reset_ids,
+        screenshot_ids=cancelled_ids,
         stage="phi_detection",
-        message=f"Cancelled: revoked {len(revoked_ids)} queued + killed {len(killed_ids)} active tasks, reset {len(reset_ids)} screenshots",
+        message=f"Cancelled {len(cancelled_ids)} workflow(s)",
     )
 
 
@@ -2481,6 +2400,7 @@ async def remove_from_phi_whitelist(request_body: PHIWhitelistTextRequest, curre
 @router.post("/preprocess-stage/phi-redaction", response_model=StagePreprocessResponse)
 async def run_phi_redaction_stage(
     request: PHIRedactionStageRequest,
+    db: DatabaseSession,
     repo: ScreenshotRepo,
     current_user: CurrentUser,
 ):
@@ -2494,12 +2414,10 @@ async def run_phi_redaction_stage(
             message="No eligible screenshots for PHI redaction",
         )
 
-    from celery import group as celery_group
+    from screenshot_processor.web.services.workflow_service import create_redaction_workflows_batch
 
-    from screenshot_processor.web.tasks import phi_redaction_task
-
-    task_group = celery_group(phi_redaction_task.s(sid, method=request.phi_redaction_method) for sid in ids)
-    task_group.apply_async()
+    wf_ids = await create_redaction_workflows_batch(db, ids)
+    await db.commit()
 
     logger.info("PHI redaction queued", extra={"count": len(ids), "username": current_user.username})
     return StagePreprocessResponse(
@@ -2513,6 +2431,7 @@ async def run_phi_redaction_stage(
 @router.post("/preprocess-stage/ocr", response_model=StagePreprocessResponse)
 async def run_ocr_stage(
     request: OCRStageRequest,
+    db: DatabaseSession,
     repo: ScreenshotRepo,
     current_user: CurrentUser,
 ):
@@ -2526,14 +2445,10 @@ async def run_ocr_stage(
             message="No eligible screenshots for OCR processing",
         )
 
-    from celery import group as celery_group
+    from screenshot_processor.web.services.workflow_service import create_redaction_workflows_batch
 
-    from screenshot_processor.web.tasks import ocr_stage_task
-
-    task_group = celery_group(
-        ocr_stage_task.s(sid, ocr_method=request.ocr_method, max_shift=request.max_shift) for sid in ids
-    )
-    task_group.apply_async()
+    wf_ids = await create_redaction_workflows_batch(db, ids)
+    await db.commit()
 
     logger.info(
         "OCR processing queued",
