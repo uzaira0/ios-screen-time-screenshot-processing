@@ -174,20 +174,28 @@ let tesseractWorker: Awaited<ReturnType<typeof import("tesseract.js").createWork
 
 async function getTesseractWorker() {
   if (!tesseractWorker) {
+    let timedOut = false;
+    const workerPromise = (async () => {
+      const Tesseract = await import("tesseract.js");
+      return Tesseract.createWorker("eng", undefined, {
+        workerPath: new URL("/tesseract-worker.min.js", window.location.origin).href,
+        corePath: new URL("/", window.location.origin).href,
+        langPath: new URL("/", window.location.origin).href,
+      });
+    })();
+
     const result = await Promise.race([
-      (async () => {
-        const Tesseract = await import("tesseract.js");
-        return Tesseract.createWorker("eng", undefined, {
-          workerPath: new URL("/tesseract-worker.min.js", window.location.origin).href,
-          corePath: new URL("/", window.location.origin).href,
-          langPath: new URL("/", window.location.origin).href,
-        });
-      })(),
+      workerPromise,
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Tesseract worker failed to initialize in 15s")), 15_000),
+        setTimeout(() => { timedOut = true; reject(new Error("Tesseract worker failed to initialize in 15s")); }, 15_000),
       ),
     ]);
     tesseractWorker = result;
+
+    // If timeout fired but worker eventually resolves, terminate the zombie
+    workerPromise.then((worker) => {
+      if (timedOut) worker.terminate();
+    }).catch(() => {});
   }
   return tesseractWorker;
 }

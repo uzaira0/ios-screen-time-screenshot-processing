@@ -80,5 +80,11 @@ export interface IStorageService {
   ): Promise<NavigationResponse>;
 
   /** Estimate storage usage via navigator.storage.estimate(). Returns null if unsupported. */
-  getStorageEstimate?(): Promise<{ usage: number; quota: number; percentUsed: number } | null>;
+  getStorageEstimate?(): Promise<StorageEstimate | null>;
+}
+
+export interface StorageEstimate {
+  usage: number;
+  quota: number;
+  percentUsed: number;
 }

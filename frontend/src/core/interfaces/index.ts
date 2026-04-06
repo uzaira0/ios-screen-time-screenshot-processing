@@ -10,6 +10,7 @@ export type {
   IStorageService,
   PaginationParams,
   NavigationQueryParams,
+  StorageEstimate,
 } from "./IStorageService";
 export type {
   IProcessingService,

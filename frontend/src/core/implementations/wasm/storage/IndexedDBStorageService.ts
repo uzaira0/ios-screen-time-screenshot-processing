@@ -596,7 +596,7 @@ export class IndexedDBStorageService implements IStorageService {
     }
   }
 
-  async getStorageEstimate(): Promise<{ usage: number; quota: number; percentUsed: number } | null> {
+  async getStorageEstimate(): Promise<import("@/core/interfaces/IStorageService").StorageEstimate | null> {
     if (!navigator.storage?.estimate) return null;
     const { usage, quota } = await navigator.storage.estimate();
     return {

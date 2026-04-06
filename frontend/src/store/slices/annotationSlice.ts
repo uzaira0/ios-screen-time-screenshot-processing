@@ -178,8 +178,8 @@ export const createAnnotationSlice = (
         localStorage.setItem("unsaved-annotations", JSON.stringify(remaining));
         console.warn(`[Annotations] ${remaining.length} annotation(s) still failed to save`);
       }
-    } catch {
-      // localStorage parse error — clear corrupted data
+    } catch (e) {
+      console.warn("[Annotations] Clearing corrupted backup:", e);
       localStorage.removeItem("unsaved-annotations");
     }
   },

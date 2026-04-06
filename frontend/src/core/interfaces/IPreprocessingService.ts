@@ -9,6 +9,7 @@ import type {
   PHIRegionRect,
 } from "@/types";
 import type { PreprocessingStages } from "@/core/generated/constants";
+import type { StorageEstimate } from "./IStorageService";
 
 export type PreprocessingStage = PreprocessingStages;
 
@@ -80,5 +81,5 @@ export interface IPreprocessingService {
   /** Reset any stages stuck in "running" status after a tab crash (WASM mode only). */
   reconcileStuckStages?(): Promise<number>;
   /** Estimate storage usage (WASM mode only). */
-  getStorageEstimate?(): Promise<{ usage: number; quota: number; percentUsed: number } | null>;
+  getStorageEstimate?(): Promise<StorageEstimate | null>;
 }

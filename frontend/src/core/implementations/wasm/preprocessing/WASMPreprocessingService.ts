@@ -139,7 +139,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
     this.processing = processing;
   }
 
-  async getStorageEstimate(): Promise<{ usage: number; quota: number; percentUsed: number } | null> {
+  async getStorageEstimate(): Promise<import("@/core/interfaces/IStorageService").StorageEstimate | null> {
     return this.storage.getStorageEstimate();
   }
 
@@ -174,6 +174,18 @@ export class WASMPreprocessingService implements IPreprocessingService {
     // Also terminate PHI detection workers
     terminateNERWorker();
     terminateTesseractWorker();
+  }
+
+  /** Record a failed event and return when the image blob is missing from storage. */
+  private async recordMissingBlob(screenshot: Screenshot, stage: PreprocessingStage): Promise<void> {
+    const pp = getPreprocessing(screenshot);
+    const updated = addEvent(pp, stage, SS.FAILED, {
+      processing_status: "failed",
+      error: "Image file missing from storage. Re-upload this screenshot.",
+    });
+    await this.storage.updateScreenshot(screenshot.id as number, {
+      processing_metadata: setPreprocessing(screenshot, updated),
+    });
   }
 
   async getGroups(): Promise<Group[]> {
@@ -361,17 +373,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
       }
 
       case "cropping": {
-        if (!blob) {
-          const pp = getPreprocessing(screenshot);
-          const updated = addEvent(pp, stage, SS.COMPLETED, {
-            processing_status: "failed",
-            error: "Image file missing from storage. Re-upload this screenshot.",
-          });
-          await this.storage.updateScreenshot(id, {
-            processing_metadata: setPreprocessing(screenshot, updated),
-          });
-          return;
-        }
+        if (!blob) { await this.recordMissingBlob(screenshot, stage); return; }
 
         // Use the preserved original if available (handles re-runs after reset)
         const originalBlob = await this.storage.getStageBlob(id, "original");
@@ -412,17 +414,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
       }
 
       case "phi_detection": {
-        if (!blob) {
-          const pp = getPreprocessing(screenshot);
-          const updated = addEvent(pp, stage, SS.COMPLETED, {
-            processing_status: "failed",
-            error: "Image file missing from storage. Re-upload this screenshot.",
-          });
-          await this.storage.updateScreenshot(id, {
-            processing_metadata: setPreprocessing(screenshot, updated),
-          });
-          return;
-        }
+        if (!blob) { await this.recordMissingBlob(screenshot, stage); return; }
 
         const phiResult = await detectPHI(blob, {
           llmEndpoint: options.llm_endpoint,
@@ -448,17 +440,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
       }
 
       case "phi_redaction": {
-        if (!blob) {
-          const pp = getPreprocessing(screenshot);
-          const updated = addEvent(pp, stage, SS.COMPLETED, {
-            processing_status: "failed",
-            error: "Image file missing from storage. Re-upload this screenshot.",
-          });
-          await this.storage.updateScreenshot(id, {
-            processing_metadata: setPreprocessing(screenshot, updated),
-          });
-          return;
-        }
+        if (!blob) { await this.recordMissingBlob(screenshot, stage); return; }
 
         // Get PHI regions from the detection stage
         const pp = getPreprocessing(screenshot);
@@ -501,17 +483,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
       }
 
       case "ocr": {
-        if (!blob) {
-          const pp = getPreprocessing(screenshot);
-          const updated = addEvent(pp, stage, SS.COMPLETED, {
-            processing_status: "failed",
-            error: "Image file missing from storage. Re-upload this screenshot.",
-          });
-          await this.storage.updateScreenshot(id, {
-            processing_metadata: setPreprocessing(screenshot, updated),
-          });
-          return;
-        }
+        if (!blob) { await this.recordMissingBlob(screenshot, stage); return; }
         const _ocrT0 = performance.now();
 
         const ocrMethod = (options.ocr_method ?? "line_based") as "ocr_anchored" | "line_based";

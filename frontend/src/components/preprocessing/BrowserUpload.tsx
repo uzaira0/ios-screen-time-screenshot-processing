@@ -15,7 +15,7 @@ function useStorageWarning() {
     if (!config.isLocalMode || !navigator.storage?.estimate) return;
     navigator.storage.estimate().then(({ usage, quota }) => {
       if (quota) setPercentUsed(((usage ?? 0) / quota) * 100);
-    }).catch(() => {});
+    }).catch((e) => console.debug("[StorageWarning] estimate failed:", e));
   }, []);
 
   if (dismissed || percentUsed === null || percentUsed <= 80) return null;

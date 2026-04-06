@@ -659,7 +659,7 @@ export function createPreprocessingStore(service: IPreprocessingService) {
         if (est && est.percentUsed > 80) {
           toast(`Storage is ${est.percentUsed.toFixed(0)}% full. Consider deleting old groups to free space.`, { duration: 8000 });
         }
-      } catch { /* ignore */ }
+      } catch (e) { console.debug("[Upload] Storage estimate failed:", e); }
     }
 
     // Refresh groups and screenshots
