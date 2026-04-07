@@ -1,0 +1,5 @@
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y tesseract-ocr && rm -rf /var/lib/apt/lists/*
+RUN pip install pytesseract opencv-python-headless numpy Pillow
+COPY bench_pytesseract.py /bench.py
+ENTRYPOINT ["python", "/bench.py"]

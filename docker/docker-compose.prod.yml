@@ -1,0 +1,175 @@
+# =============================================================================
+# iOS Screen Time Screenshot Processing - Production Docker Compose
+# =============================================================================
+#
+# Build context: monorepo root (../../..)
+# Used on production server via Dokploy. Builds from monorepo context.
+#
+# Required environment variables (secrets only):
+#   POSTGRES_PASSWORD - Database password
+#   SECRET_KEY        - App secret key (32+ chars)
+#   SITE_PASSWORD     - Site-wide authentication password
+#   UPLOAD_API_KEY    - API key for uploads
+#   CORS_ORIGINS      - Allowed origins (comma-separated)
+#
+# ONE-TIME SETUP on server:
+#   docker network create traefik-apps
+#   docker network connect traefik-apps dokploy-traefik
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# =============================================================================
+
+name: ios-screen-time-screenshot-processing
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ios-screen-time-screenshot-processing-postgres
+    environment:
+      POSTGRES_USER: ios_screen_time_screenshot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ios_screen_time_screenshot_processing
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ios_screen_time_screenshot -d ios_screen_time_screenshot_processing"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ios-screen-time-screenshot-processing-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: ios-screen-time-screenshot-processing-redis
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ios-screen-time-screenshot-processing-network
+
+  backend:
+    build:
+      context: ../../..
+      dockerfile: apps/ios-screen-time-screenshot-processing/docker/backend/Dockerfile
+    image: ${BACKEND_IMAGE:-ios-screen-time-screenshot-processing-backend:latest}
+    container_name: ios-screen-time-screenshot-processing-backend
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DATABASE_URL: postgresql+asyncpg://ios_screen_time_screenshot:${POSTGRES_PASSWORD}@postgres:5432/ios_screen_time_screenshot_processing
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY}
+      SITE_PASSWORD: ${SITE_PASSWORD}
+      UPLOAD_API_KEY: ${UPLOAD_API_KEY}
+      ADMIN_USERNAMES: admin
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      RATE_LIMIT_DEFAULT: 100/minute
+      DEBUG: "false"
+      USE_FRACTIONAL_HOURLY_VALUES: "false"
+    volumes:
+      - uploads_data:/app/uploads
+      - output_data:/app/output
+      - ${SCREENSHOT_SOURCE_PATH:-./screenshots}:/app/screenshots:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - ios-screen-time-screenshot-processing-network
+      - traefik-apps
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-apps"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-api.rule=PathPrefix(`/ios-screen-time-screenshot-processing/api`)"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-api.entrypoints=web"
+      - "traefik.http.services.ios-screen-time-screenshot-processing-api.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.ios-screen-time-screenshot-processing-api-strip.stripprefix.prefixes=/ios-screen-time-screenshot-processing"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-api.middlewares=ios-screen-time-screenshot-processing-api-strip"
+
+  celery-worker:
+    image: ${BACKEND_IMAGE:-ios-screen-time-screenshot-processing-backend:latest}
+    container_name: ios-screen-time-screenshot-processing-celery
+    command: celery -A src.screenshot_processor.web.celery_app worker --loglevel=info --concurrency=8
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DATABASE_URL: postgresql+asyncpg://ios_screen_time_screenshot:${POSTGRES_PASSWORD}@postgres:5432/ios_screen_time_screenshot_processing
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY}
+      USE_FRACTIONAL_HOURLY_VALUES: "false"
+      # OCR engine config - use remote servers for faster processing
+      OCR_ENGINE_TYPE: hybrid
+      HUNYUAN_OCR_URL: http://YOUR_OCR_HOST:8080
+      PADDLEOCR_URL: http://YOUR_OCR_HOST:8081
+    volumes:
+      - uploads_data:/app/uploads
+      - output_data:/app/output
+      - ${SCREENSHOT_SOURCE_PATH:-./screenshots}:/app/screenshots:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - ios-screen-time-screenshot-processing-network
+
+  frontend:
+    build:
+      context: ../../..
+      dockerfile: apps/ios-screen-time-screenshot-processing/docker/frontend/Dockerfile
+    image: ${FRONTEND_IMAGE:-ios-screen-time-screenshot-processing-frontend:latest}
+    container_name: ios-screen-time-screenshot-processing-frontend
+    environment:
+      BASE_PATH: /ios-screen-time-screenshot-processing
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - traefik-apps
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-apps"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-fe.rule=PathPrefix(`/ios-screen-time-screenshot-processing`)"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-fe.entrypoints=web"
+      - "traefik.http.services.ios-screen-time-screenshot-processing-fe.loadbalancer.server.port=80"
+      - "traefik.http.middlewares.ios-screen-time-screenshot-processing-fe-strip.stripprefix.prefixes=/ios-screen-time-screenshot-processing"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-fe.middlewares=ios-screen-time-screenshot-processing-fe-strip"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-fe.priority=1"
+
+networks:
+  ios-screen-time-screenshot-processing-network:
+    driver: bridge
+  traefik-apps:
+    external: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
+  output_data:

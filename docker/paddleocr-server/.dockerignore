@@ -1,0 +1,6 @@
+models/
+*.pyc
+__pycache__/
+.git/
+*.md
+.dockerignore

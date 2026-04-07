@@ -1,0 +1,13 @@
+{
+  "detail": [
+    {
+      "loc": [
+        "body",
+        "hourly_values",
+        "24"
+      ],
+      "msg": "Hour key '24' must be between 0 and 23",
+      "type": "value_error"
+    }
+  ]
+}

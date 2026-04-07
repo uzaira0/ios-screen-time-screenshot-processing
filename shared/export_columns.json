@@ -1,0 +1,24 @@
+{
+  "_comment": "Canonical CSV export column headers. Used by Python backend, TypeScript frontend (WASM), and Rust. SINGLE SOURCE OF TRUTH — edit here, then run: python scripts/generate-shared-constants.py",
+  "headers": [
+    "Screenshot ID",
+    "Filename",
+    "Original Filepath",
+    "Group ID",
+    "Participant ID",
+    "Image Type",
+    "Screenshot Date",
+    "Uploaded At",
+    "Processing Status",
+    "Is Verified",
+    "Verified By Count",
+    "Annotation Count",
+    "Has Consensus",
+    "Title",
+    "OCR Total",
+    "Computed Total",
+    "Disagreement Count"
+  ],
+  "hourly_count": 24,
+  "hourly_prefix": "Hour"
+}

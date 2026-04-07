@@ -1,0 +1,6 @@
+{
+  "detail": "Failed to decode base64 image data",
+  "error_code": "invalid_base64",
+  "screenshot_index": null,
+  "success": false
+}

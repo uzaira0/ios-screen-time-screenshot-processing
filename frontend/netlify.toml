@@ -1,0 +1,117 @@
+# Netlify Configuration for Screenshot Processor Frontend
+# https://docs.netlify.com/configure-builds/file-based-configuration/
+
+[build]
+  # Build command to run
+  command = "npm run build"
+
+  # Directory with the built static files
+  publish = "dist"
+
+  # Base directory (if your frontend is in a subdirectory)
+  # base = "frontend"
+
+[build.environment]
+  # Node version
+  NODE_VERSION = "18"
+
+  # Prevent npm warnings
+  NPM_FLAGS = "--legacy-peer-deps"
+
+# Redirect all requests to index.html for client-side routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+  force = false
+
+# Headers for PWA support
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Content-Type = "application/manifest+json"
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/workbox-*.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# Cache static assets aggressively
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/icons/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Security headers
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # Prevent clickjacking
+    X-Frame-Options = "SAMEORIGIN"
+
+    # Prevent MIME type sniffing
+    X-Content-Type-Options = "nosniff"
+
+    # Enable XSS protection
+    X-XSS-Protection = "1; mode=block"
+
+    # Referrer policy
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+    # Permissions policy
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
+    # Content Security Policy
+    Content-Security-Policy = """
+      default-src 'self';
+      script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net blob:;
+      style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+      font-src 'self' https://fonts.gstatic.com data:;
+      img-src 'self' data: blob: https:;
+      connect-src 'self' https://*.tessdata.org https://cdn.jsdelivr.net;
+      worker-src 'self' blob:;
+      child-src 'self' blob:;
+      object-src 'none';
+      base-uri 'self';
+      form-action 'self';
+      frame-ancestors 'none';
+    """
+
+# Plugin configuration
+[[plugins]]
+  package = "@netlify/plugin-lighthouse"
+
+  [plugins.inputs]
+    output_path = "lighthouse-report"
+
+    [plugins.inputs.thresholds]
+      performance = 0.9
+      accessibility = 0.95
+      best-practices = 0.95
+      seo = 0.9
+      pwa = 1.0
+
+# Development context (branch deploys)
+[context.deploy-preview]
+  command = "npm run build"
+
+[context.branch-deploy]
+  command = "npm run build"
+
+# Production context
+[context.production]
+  command = "npm run build"
+
+  [context.production.environment]
+    NODE_ENV = "production"

@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+
+# Bun dev output
+.bun-dev/
+
+# Test outputs
+test-results/
+playwright-report/
+playwright/.auth/
+*.png
+*.jpg
+*.jpeg
+!src-tauri/icons/**
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
+*.tmp
+.cache/
+
+# Windows artifacts
+nul
+
+# PWA dev build
+dev-dist/
+
+# Lighthouse reports
+lighthouse-*.html
+lighthouse-*.json

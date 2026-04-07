@@ -1,0 +1,36 @@
+{
+  "_comment": "Processing pipeline constants. SINGLE SOURCE OF TRUTH.",
+  "bar_extraction": {
+    "num_slices": 24,
+    "max_y": 60,
+    "lower_grid_buffer": 2,
+    "scale_amount": 4
+  },
+  "horizontal_lines": {
+    "gray_min": 195,
+    "gray_max": 210,
+    "min_width_pct": 0.35,
+    "min_lines": 4,
+    "max_lines": 8,
+    "max_spacing_deviation": 10
+  },
+  "vertical_lines": {
+    "gray_min": 190,
+    "gray_max": 215,
+    "min_height_pct": 0.4,
+    "expected_lines": [3, 4, 5],
+    "spacing_tolerance": 0.25
+  },
+  "grid_edge_refinement": {
+    "gray_min": 190,
+    "gray_max": 220,
+    "min_line_coverage": 0.3
+  },
+  "dark_mode": {
+    "threshold": 100
+  },
+  "darken_non_white": {
+    "channel_sum_threshold": 720,
+    "_comment": "Equivalent to (R+G+B)/3 > 240. Uses integer sum to match Rust exactly."
+  }
+}

@@ -1,0 +1,271 @@
+# iOS Screen Time Screenshot Processing - Development Docker Compose
+#
+# This configuration provides:
+# - PostgreSQL database
+# - Redis for Celery (optional)
+# - Backend API with auto-reload
+# - Frontend with Vite HMR (Hot Module Replacement)
+#
+# Usage:
+#   docker-compose -f docker/docker-compose.dev.yml up
+#   # Or from docker/ directory:
+#   docker-compose -f docker-compose.dev.yml up
+#
+# Frontend hot reloading:
+#   Changes to frontend/src/* are immediately reflected in the browser
+#
+# Backend hot reloading:
+#   Changes to src/* trigger automatic server restart
+#
+# PORTS (to avoid conflicts with other projects):
+#   PostgreSQL: 5436
+#   Redis: 6382
+#   Backend API: 8002
+#   Frontend: 5175
+
+name: ios-screen-time
+
+services:
+  # ==========================================================================
+  # Database Services
+  # ==========================================================================
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ios-screen-time-screenshot-processing-postgres-dev
+    ports:
+      - "127.0.0.1:5436:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      # Init script creates test database on first startup
+      - ./postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
+    environment:
+      POSTGRES_USER: ios_screen_time_screenshot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ios_screen_time_screenshot}
+      POSTGRES_DB: ios_screen_time_screenshot_processing
+    # Performance tuning (production-safe settings)
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c effective_cache_size=768MB
+      -c work_mem=16MB
+      -c maintenance_work_mem=128MB
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ios_screen_time_screenshot -d ios_screen_time_screenshot_processing"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: ios-screen-time-screenshot-processing-redis-dev
+    ports:
+      - "127.0.0.1:6382:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Backend API (with hot reload)
+  # ==========================================================================
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile.dev
+    container_name: ios-screen-time-screenshot-processing-backend-dev
+    ports:
+      - "8002:8000"
+    volumes:
+      # Mount source code for hot reloading
+      - ../src:/app/src:ro
+      - ../alembic:/app/alembic:ro
+      - ../alembic.ini:/app/alembic.ini:ro
+      # Persistent data directories (production volumes)
+      - uploads_data:/app/uploads
+      - output_data:/app/output
+      - ../db:/app/db
+      - ../debug:/app/debug
+      - ${SCREENSHOT_SOURCE_PATH:-../screenshots}:/app/screenshots:ro
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ios_screen_time_screenshot:${POSTGRES_PASSWORD:-ios_screen_time_screenshot}@postgres:5432/ios_screen_time_screenshot_processing
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-minimum-32-characters-long}
+      UPLOAD_API_KEY: ${UPLOAD_API_KEY:-dev-upload-key-change-in-production}
+      PYTHONUNBUFFERED: 1
+      DEBUG: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5175,http://localhost:3000,http://YOUR_SERVER_HOST}
+      USE_FRACTIONAL_HOURLY_VALUES: "false"
+      # OCR engine: leptess (Rust) first, pytesseract fallback
+      HYBRID_ENABLE_HUNYUAN: "false"
+      HYBRID_ENABLE_PADDLEOCR: "false"
+      HYBRID_ENABLE_TESSERACT: "true"
+      # Site password (set to require password on login)
+      SITE_PASSWORD: ${SITE_PASSWORD:-}
+    # Override CMD to use --reload for hot reloading
+    command: >
+      sh -c "
+        python -c 'from src.screenshot_processor.web.database.database import init_db; import asyncio; asyncio.run(init_db())' &&
+        uvicorn src.screenshot_processor.web.api.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src
+      "
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - default
+      - traefik-apps
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-apps"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-api.rule=PathPrefix(`/ios-screen-time-screenshot-processing/api`)"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-api.entrypoints=web"
+      - "traefik.http.services.ios-screen-time-screenshot-processing-api.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.ios-screen-time-screenshot-processing-api-strip.stripprefix.prefixes=/ios-screen-time-screenshot-processing"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-api.middlewares=ios-screen-time-screenshot-processing-api-strip"
+
+  # ==========================================================================
+  # Celery Worker (with hot reload)
+  # ==========================================================================
+
+  # Slow worker: PHI detection + preprocessing (CPU-bound, long-running OCR)
+  celery-worker:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile.dev
+    container_name: ios-screen-time-screenshot-processing-celery-dev
+    command: celery -A src.screenshot_processor.web.celery_app worker --loglevel=info --concurrency=2 --queues=default
+    # Override Dockerfile healthcheck - Celery workers don't serve HTTP
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A src.screenshot_processor.web.celery_app inspect ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      # Mount source code for hot reloading
+      - ../src:/app/src:ro
+      # Persistent data directories (production volumes)
+      - uploads_data:/app/uploads
+      - output_data:/app/output
+      - ../db:/app/db
+      - ../debug:/app/debug
+      - ${SCREENSHOT_SOURCE_PATH:-../screenshots}:/app/screenshots:ro
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ios_screen_time_screenshot:${POSTGRES_PASSWORD:-ios_screen_time_screenshot}@postgres:5432/ios_screen_time_screenshot_processing
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-minimum-32-characters-long}
+      PYTHONUNBUFFERED: 1
+      USE_FRACTIONAL_HOURLY_VALUES: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  # Fast worker: redaction, OCR, device detection, cropping (milliseconds each)
+  celery-worker-fast:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile.dev
+    container_name: ios-screen-time-screenshot-processing-celery-fast-dev
+    command: celery -A src.screenshot_processor.web.celery_app worker --loglevel=info --concurrency=4 --queues=fast --hostname=fast@%h
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A src.screenshot_processor.web.celery_app inspect ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ../src:/app/src:ro
+      - uploads_data:/app/uploads
+      - output_data:/app/output
+      - ../db:/app/db
+      - ../debug:/app/debug
+      - ${SCREENSHOT_SOURCE_PATH:-../screenshots}:/app/screenshots:ro
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ios_screen_time_screenshot:${POSTGRES_PASSWORD:-ios_screen_time_screenshot}@postgres:5432/ios_screen_time_screenshot_processing
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-minimum-32-characters-long}
+      PYTHONUNBUFFERED: 1
+      USE_FRACTIONAL_HOURLY_VALUES: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Frontend (with Bun live reload)
+  # ==========================================================================
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend/Dockerfile.dev
+    container_name: ios-screen-time-screenshot-processing-frontend-dev
+    ports:
+      - "5175:5173"
+    volumes:
+      # Mount source code for live reloading
+      - ../frontend/src:/app/src
+      - ../frontend/public:/app/public
+      - ../frontend/index.html:/app/index.html
+      - ../frontend/server:/app/server
+      - ../frontend/tsconfig.json:/app/tsconfig.json
+      - ../frontend/tailwind.config.js:/app/tailwind.config.js
+      - ../frontend/postcss.config.js:/app/postcss.config.js
+      # Don't mount node_modules - use container's version
+      - /app/node_modules
+    environment:
+      # Backend URL for API proxy (internal Docker network)
+      BACKEND_URL: http://backend:8000
+      # Base path for reverse proxy (Traefik strips this, but assets need it)
+      BASE_PATH: /ios-screen-time-screenshot-processing
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - default
+      - traefik-apps
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-apps"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-fe.rule=PathPrefix(`/ios-screen-time-screenshot-processing`)"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-fe.entrypoints=web"
+      - "traefik.http.services.ios-screen-time-screenshot-processing-fe.loadbalancer.server.port=5173"
+      - "traefik.http.middlewares.ios-screen-time-screenshot-processing-fe-strip.stripprefix.prefixes=/ios-screen-time-screenshot-processing"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-fe.middlewares=ios-screen-time-screenshot-processing-fe-strip"
+      - "traefik.http.routers.ios-screen-time-screenshot-processing-fe.priority=1"
+
+networks:
+  traefik-apps:
+    external: true
+
+volumes:
+  postgres_dev_data:
+    name: monorepo-iosscreentimescreenshotprocessing-9pxrqh_postgres_data
+    external: true
+  uploads_data:
+    name: monorepo-iosscreentimescreenshotprocessing-9pxrqh_uploads_data
+    external: true
+  output_data:
+    name: monorepo-iosscreentimescreenshotprocessing-9pxrqh_output_data
+    external: true

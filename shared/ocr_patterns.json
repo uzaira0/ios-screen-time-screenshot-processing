@@ -1,0 +1,54 @@
+{
+  "_comment": "OCR digit normalization and time extraction patterns. SINGLE SOURCE OF TRUTH. Each implementation generates regex from these definitions.",
+  "digit_normalization": [
+    { "digit": "1", "chars": "Il|", "contexts": ["before_unit", "after_digit", "before_digit"] },
+    { "digit": "0", "chars": "O", "contexts": ["before_unit", "after_digit", "before_digit", "between_digits"] },
+    { "digit": "4", "chars": "A", "contexts": ["before_unit", "after_digit"] },
+    { "digit": "5", "chars": "S", "contexts": ["before_unit", "after_digit", "before_digit"] },
+    { "digit": "6", "chars": "Gb", "contexts": ["before_unit", "after_digit"] },
+    { "digit": "8", "chars": "B", "contexts": ["before_unit", "after_digit"] },
+    { "digit": "9", "chars": "gq", "contexts": ["before_unit", "after_digit"] },
+    { "digit": "2", "chars": "Z", "contexts": ["before_unit", "after_digit"] },
+    { "digit": "7", "chars": "T", "contexts": ["before_unit", "after_digit"] }
+  ],
+  "time_extraction_patterns": [
+    { "name": "hour_min", "regex": "(\\d{1,2})\\s*h\\s*(\\d{1,2})\\s*m", "format": "{h}h {m}m", "priority": 1 },
+    { "name": "hour_min_no_m", "regex": "(\\d{1,2})\\s*h\\s+(\\d{1,2})(?!\\s*[hms])", "format": "{h}h {m}m", "priority": 2, "note": "Rust regex lacks lookahead — use captures-based workaround" },
+    { "name": "min_sec", "regex": "(\\d{1,2})\\s*m\\s*([0O]|\\d{1,2})\\s*s", "format": "{m}m {s}s", "priority": 3 },
+    { "name": "hours_only", "regex": "(\\d{1,2})\\s*h\\b", "format": "{h}h", "priority": 4 },
+    { "name": "min_only", "regex": "(\\d{1,2})\\s*m\\b", "format": "{m}m", "priority": 5 },
+    { "name": "sec_only", "regex": "([0O]|\\d{1,2})\\s*s\\b", "format": "{s}s", "priority": 6 }
+  ],
+  "test_vectors": {
+    "_comment": "Input → expected output pairs for cross-implementation parity testing",
+    "normalize_ocr_digits": [
+      ["Ih 3Om", "1h 30m"],
+      ["I2", "12"],
+      ["3I h", "31 h"],
+      ["O h", "0 h"],
+      ["1O h", "10 h"],
+      ["O5", "05"],
+      ["1O2", "102"],
+      ["S h", "5 h"],
+      ["3S h", "35 h"],
+      ["A h", "4 h"],
+      ["1A h", "14 h"],
+      ["hello world", "hello world"],
+      ["3h 45m", "3h 45m"]
+    ],
+    "extract_time_from_text": [
+      ["4h 36m", "4h 36m"],
+      ["12h 5m", "12h 5m"],
+      ["some text 2h 30m more text", "2h 30m"],
+      ["4h 36", "4h 36m"],
+      ["45m 30s", "45m 30s"],
+      ["5m Os", "5m 0s"],
+      ["3h", "3h"],
+      ["45m", "45m"],
+      ["30s", "30s"],
+      ["no time here", ""],
+      ["", ""],
+      ["Ih 3Om", "1h 30m"]
+    ]
+  }
+}

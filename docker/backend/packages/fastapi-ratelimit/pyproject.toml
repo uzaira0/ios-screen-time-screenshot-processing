@@ -1,0 +1,47 @@
+[project]
+name = "fastapi-ratelimit"
+version = "0.1.0"
+description = "Rate limiting for FastAPI applications"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Research Team" }]
+keywords = ["fastapi", "ratelimit", "throttling"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+    "Typing :: Typed",
+]
+dependencies = [
+    "fastapi>=0.100.0",
+    "slowapi>=0.1.9",
+]
+
+[project.optional-dependencies]
+redis = [
+    "redis>=5.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.24.0",
+    "ruff>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fastapi_ratelimit"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

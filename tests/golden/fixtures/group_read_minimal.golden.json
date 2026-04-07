@@ -1,0 +1,16 @@
+{
+  "avg_processing_time_seconds": null,
+  "created_at": "2025-01-01T00:00:00Z",
+  "id": "g1",
+  "image_type": "screen_time",
+  "max_processing_time_seconds": null,
+  "min_processing_time_seconds": null,
+  "name": "Group 1",
+  "processing_completed": 0,
+  "processing_deleted": 0,
+  "processing_failed": 0,
+  "processing_pending": 0,
+  "processing_skipped": 0,
+  "screenshot_count": 0,
+  "total_processing_time_seconds": null
+}

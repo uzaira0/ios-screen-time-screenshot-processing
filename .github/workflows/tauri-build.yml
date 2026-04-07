@@ -1,0 +1,260 @@
+name: Tauri Build
+
+on:
+  push:
+    tags: ['tauri-v*']
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Mark as prerelease'
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: universal-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri -> target
+          cache-on-failure: true
+
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libleptonica-dev libtesseract-dev clang
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Build frontend
+        working-directory: frontend
+        run: bun run --bun vite build
+
+      - name: Validate updater config
+        shell: bash
+        run: |
+          PUBKEY=$(jq -r '.plugins.updater.pubkey' frontend/src-tauri/tauri.conf.json)
+          if [[ "$PUBKEY" == "REPLACE_WITH_PUBLIC_KEY" ]]; then
+            echo "::error::Updater public key is still a placeholder! Run: cd frontend && npx @tauri-apps/cli signer generate"
+            exit 1
+          fi
+
+      - name: Clean old bundle artifacts
+        shell: bash
+        run: find frontend/src-tauri/target -path '*/release/bundle' -type d -exec rm -rf {} + 2>/dev/null || true
+
+      - name: Build Tauri
+        working-directory: frontend
+        run: npx @tauri-apps/cli build ${{ matrix.os == 'macos-latest' && '--target universal-apple-darwin' || '' }}
+        env:
+          CI: true
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload updater artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-${{ matrix.target }}
+          path: |
+            frontend/src-tauri/target/**/release/bundle/**/*.tar.gz
+            frontend/src-tauri/target/**/release/bundle/**/*.nsis.zip
+            frontend/src-tauri/target/**/release/bundle/**/*.sig
+          if-no-files-found: warn
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.target }}
+          path: |
+            frontend/src-tauri/target/**/release/bundle/**/*.dmg
+            frontend/src-tauri/target/**/release/bundle/**/*.exe
+            frontend/src-tauri/target/**/release/bundle/**/*.msi
+            frontend/src-tauri/target/**/release/bundle/**/*.deb
+            frontend/src-tauri/target/**/release/bundle/**/*.AppImage
+          if-no-files-found: warn
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Determine version and tag
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
+        run: |
+          if [[ "$REF_TYPE" == "tag" ]]; then
+            TAG="$REF_NAME"
+            VERSION="${TAG#tauri-v}"
+          else
+            VERSION=$(jq -r '.version' frontend/src-tauri/tauri.conf.json)
+            TAG="tauri-v${VERSION}"
+          fi
+
+          # Detect prerelease: tag contains '-' (e.g. 0.2.0-beta.1) OR workflow_dispatch input
+          PRERELEASE="false"
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE="true"
+          fi
+          if [[ "$INPUT_PRERELEASE" == "true" ]]; then
+            PRERELEASE="true"
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "Version: ${VERSION}, Tag: ${TAG}, Prerelease: ${PRERELEASE}"
+
+      - name: Create tag for workflow_dispatch
+        if: github.ref_type != 'tag'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( \
+            -name '*.tar.gz' -o -name '*.sig' \
+            -o -name '*.dmg' -o -name '*.exe' -o -name '*.msi' \
+            -o -name '*.deb' -o -name '*.AppImage' \
+          \) -exec cp {} release-assets/ \;
+          echo "Release assets:"
+          ls -la release-assets/
+
+      - name: Generate latest.json
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          REPO="uzaira0/ios-screen-time-screenshot-processing"
+          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          cd release-assets
+
+          # GitHub replaces spaces with dots in release asset filenames,
+          # so the download URL must use dots (not %20).
+          sanitize() { echo "$1" | sed 's/ /./g'; }
+
+          # --- macOS (universal) ---
+          MAC_TARBALL=$(ls *.app.tar.gz 2>/dev/null | head -1 || true)
+          MAC_SIG=""
+          if [[ -n "$MAC_TARBALL" && -f "${MAC_TARBALL}.sig" ]]; then
+            MAC_SIG=$(cat "${MAC_TARBALL}.sig")
+          fi
+
+          # --- Windows (NSIS exe — v2 format, no .nsis.zip wrapper) ---
+          WIN_EXE=$(ls *-setup.exe 2>/dev/null | grep -v '.sig$' | head -1 || true)
+          WIN_SIG=""
+          if [[ -n "$WIN_EXE" && -f "${WIN_EXE}.sig" ]]; then
+            WIN_SIG=$(cat "${WIN_EXE}.sig")
+          fi
+
+          # --- Linux (AppImage — v2 format, no .tar.gz wrapper) ---
+          LINUX_APPIMAGE=$(ls *.AppImage 2>/dev/null | grep -v '.sig$' | head -1 || true)
+          LINUX_SIG=""
+          if [[ -n "$LINUX_APPIMAGE" && -f "${LINUX_APPIMAGE}.sig" ]]; then
+            LINUX_SIG=$(cat "${LINUX_APPIMAGE}.sig")
+          fi
+
+          # Build JSON dynamically — only include platforms with artifacts + signatures
+          PLATFORMS=""
+          if [[ -n "$MAC_TARBALL" && -n "$MAC_SIG" ]]; then
+            MAC_URL="${BASE_URL}/$(sanitize "$MAC_TARBALL")"
+            PLATFORMS="${PLATFORMS:+$PLATFORMS,}
+              \"darwin-universal\": { \"signature\": \"${MAC_SIG}\", \"url\": \"${MAC_URL}\" },
+              \"darwin-aarch64\": { \"signature\": \"${MAC_SIG}\", \"url\": \"${MAC_URL}\" },
+              \"darwin-x86_64\": { \"signature\": \"${MAC_SIG}\", \"url\": \"${MAC_URL}\" }"
+          fi
+          if [[ -n "$WIN_EXE" && -n "$WIN_SIG" ]]; then
+            WIN_URL="${BASE_URL}/$(sanitize "$WIN_EXE")"
+            PLATFORMS="${PLATFORMS:+$PLATFORMS,}
+              \"windows-x86_64\": { \"signature\": \"${WIN_SIG}\", \"url\": \"${WIN_URL}\" }"
+          fi
+          if [[ -n "$LINUX_APPIMAGE" && -n "$LINUX_SIG" ]]; then
+            LINUX_URL="${BASE_URL}/$(sanitize "$LINUX_APPIMAGE")"
+            PLATFORMS="${PLATFORMS:+$PLATFORMS,}
+              \"linux-x86_64\": { \"signature\": \"${LINUX_SIG}\", \"url\": \"${LINUX_URL}\" }"
+          fi
+
+          if [[ -z "$PLATFORMS" ]]; then
+            echo "::error::No platform artifacts with signatures found — cannot generate latest.json"
+            ls -la
+            exit 1
+          fi
+
+          cat > ../latest.json <<ENDJSON
+          {
+            "version": "v${VERSION}",
+            "notes": "Release v${VERSION}",
+            "pub_date": "${PUB_DATE}",
+            "platforms": {${PLATFORMS}
+            }
+          }
+          ENDJSON
+
+          # Clean up indentation from heredoc
+          sed -i 's/^          //' ../latest.json
+
+          echo "Generated latest.json:"
+          cat ../latest.json
+
+      - name: Copy latest.json to release assets
+        run: cp latest.json release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
+          generate_release_notes: true
+          files: release-assets/*

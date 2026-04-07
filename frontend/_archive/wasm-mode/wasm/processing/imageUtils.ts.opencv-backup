@@ -1,0 +1,228 @@
+import type cv from '@techstark/opencv-js';
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const DARK_MODE_THRESHOLD = 100;
+
+export function convertDarkMode(cvLib: typeof cv, src: cv.Mat): cv.Mat {
+  const mean = cvLib.mean(src);
+  const avgBrightness = ((mean[0] ?? 0) + (mean[1] ?? 0) + (mean[2] ?? 0)) / 3;
+
+  if (avgBrightness < DARK_MODE_THRESHOLD) {
+    const inverted = new cvLib.Mat();
+    cvLib.bitwise_not(src, inverted);
+
+    const adjusted = adjustContrastBrightness(cvLib, inverted, 3.0, 10);
+    inverted.delete();
+
+    return adjusted;
+  }
+
+  return src.clone();
+}
+
+export function adjustContrastBrightness(
+  cvLib: typeof cv,
+  src: cv.Mat,
+  contrast: number = 1.0,
+  brightness: number = 0
+): cv.Mat {
+  const adjustedBrightness = brightness + Math.round(255 * (1 - contrast) / 2);
+  const dst = new cvLib.Mat();
+
+  src.convertTo(dst, -1, contrast, adjustedBrightness);
+
+  return dst;
+}
+
+export function darkenNonWhite(cvLib: typeof cv, src: cv.Mat): cv.Mat {
+  const gray = new cvLib.Mat();
+  cvLib.cvtColor(src, gray, cvLib.COLOR_BGR2GRAY);
+
+  const thresh = new cvLib.Mat();
+  cvLib.threshold(gray, thresh, 240, 255, cvLib.THRESH_BINARY);
+
+  const result = src.clone();
+  for (let y = 0; y < result.rows; y++) {
+    for (let x = 0; x < result.cols; x++) {
+      if (thresh.ucharAt(y, x) < 250) {
+        result.ucharPtr(y, x)[0] = 0;
+        result.ucharPtr(y, x)[1] = 0;
+        result.ucharPtr(y, x)[2] = 0;
+      }
+    }
+  }
+
+  gray.delete();
+  thresh.delete();
+
+  return result;
+}
+
+export function reduceColorCount(_cvLib: typeof cv, src: cv.Mat, numColors: number): cv.Mat {
+  const dst = src.clone();
+
+  for (let y = 0; y < dst.rows; y++) {
+    for (let x = 0; x < dst.cols; x++) {
+      for (let c = 0; c < dst.channels(); c++) {
+        const pixelValue = dst.ucharPtr(y, x)[c];
+
+        for (let i = 0; i < numColors; i++) {
+          const lowerBound = i * 255 / numColors;
+          const upperBound = (i + 1) * 255 / numColors;
+
+          if (pixelValue >= lowerBound && pixelValue < upperBound) {
+            dst.ucharPtr(y, x)[c] = Math.floor(i * 255 / (numColors - 1));
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return dst;
+}
+
+export function scaleUp(cvLib: typeof cv, src: cv.Mat, scaleFactor: number): cv.Mat {
+  const dst = new cvLib.Mat();
+  const dsize = new cvLib.Size(
+    Math.floor(src.cols * scaleFactor),
+    Math.floor(src.rows * scaleFactor)
+  );
+
+  cvLib.resize(src, dst, dsize, 0, 0, cvLib.INTER_AREA);
+
+  return dst;
+}
+
+export function isClose(pixel1: number[], pixel2: number[], threshold: number = 1): boolean {
+  let sum = 0;
+  for (let i = 0; i < Math.min(pixel1.length, pixel2.length); i++) {
+    sum += Math.abs((pixel1[i] ?? 0) - (pixel2[i] ?? 0));
+  }
+  return sum <= threshold * pixel1.length;
+}
+
+export function getMostCommonPixel(_cvLib: typeof cv, src: cv.Mat, index: number = -1): number[] | null {
+  const pixelCounts = new Map<string, { pixel: number[]; count: number }>();
+
+  for (let y = 0; y < src.rows; y++) {
+    for (let x = 0; x < src.cols; x++) {
+      const pixel: number[] = [];
+      for (let c = 0; c < src.channels(); c++) {
+        pixel.push(src.ucharPtr(y, x)[c]);
+      }
+
+      const key = pixel.join(',');
+      const existing = pixelCounts.get(key);
+      if (existing) {
+        existing.count++;
+      } else {
+        pixelCounts.set(key, { pixel, count: 1 });
+      }
+    }
+  }
+
+  const sorted = Array.from(pixelCounts.values())
+    .sort((a, b) => a.count - b.count);
+
+  if (sorted.length <= 1) {
+    return null;
+  }
+
+  const absIndex = index < 0 ? sorted.length + index : index;
+
+  if (absIndex >= sorted.length) {
+    const first = sorted[0];
+    return first ? first.pixel : null;
+  }
+
+  const result = sorted[absIndex];
+  return result ? result.pixel : null;
+}
+
+export function removeAllBut(_cvLib: typeof cv, src: cv.Mat, targetColor: number[], threshold: number = 30): cv.Mat {
+  const dst = src.clone();
+
+  for (let y = 0; y < dst.rows; y++) {
+    for (let x = 0; x < dst.cols; x++) {
+      const pixel: number[] = [];
+      for (let c = 0; c < dst.channels(); c++) {
+        pixel.push(dst.ucharPtr(y, x)[c]);
+      }
+
+      let distance = 0;
+      for (let c = 0; c < pixel.length; c++) {
+        const diff = (pixel[c] ?? 0) - (targetColor[c] ?? 0);
+        distance += diff * diff;
+      }
+      distance = Math.sqrt(distance);
+
+      if (distance <= threshold) {
+        for (let c = 0; c < dst.channels(); c++) {
+          dst.ucharPtr(y, x)[c] = 0;
+        }
+      } else {
+        for (let c = 0; c < dst.channels(); c++) {
+          dst.ucharPtr(y, x)[c] = 255;
+        }
+      }
+    }
+  }
+
+  return dst;
+}
+
+export async function blobToImageData(blob: Blob): Promise<ImageData> {
+  const imageBitmap = await createImageBitmap(blob);
+  const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height);
+  const ctx = canvas.getContext('2d');
+
+  if (!ctx) {
+    throw new Error('Failed to get canvas context');
+  }
+
+  ctx.drawImage(imageBitmap, 0, 0);
+  return ctx.getImageData(0, 0, imageBitmap.width, imageBitmap.height);
+}
+
+export function imageDataToMat(cvLib: typeof cv, imageData: ImageData): cv.Mat {
+  const mat = cvLib.matFromImageData(imageData);
+  return mat;
+}
+
+export function matToImageData(cvLib: typeof cv, mat: cv.Mat): ImageData {
+  const canvas = new OffscreenCanvas(mat.cols, mat.rows);
+  cvLib.imshow(canvas as any, mat);
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Failed to get canvas context');
+  }
+
+  return ctx.getImageData(0, 0, mat.cols, mat.rows);
+}
+
+export async function matToBlob(cvLib: typeof cv, mat: cv.Mat): Promise<Blob> {
+  const canvas = new OffscreenCanvas(mat.cols, mat.rows);
+  cvLib.imshow(canvas as any, mat);
+
+  return await canvas.convertToBlob({ type: 'image/png' });
+}
+
+export function extractRegion(cvLib: typeof cv, src: cv.Mat, rect: Rect): cv.Mat {
+  const roi = src.roi(new cvLib.Rect(rect.x, rect.y, rect.width, rect.height));
+  const clone = roi.clone();
+  roi.delete();
+  return clone;
+}

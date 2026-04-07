@@ -1,0 +1,5 @@
+tests/
+docs/
+frontend/node_modules/
+*.md
+alembic/versions/

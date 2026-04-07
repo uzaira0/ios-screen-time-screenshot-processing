@@ -1,0 +1,5 @@
+FROM node:22-slim
+WORKDIR /app
+RUN npm install tesseract.js@5
+COPY bench_tesseractjs.mjs /app/bench.mjs
+ENTRYPOINT ["node", "/app/bench.mjs"]

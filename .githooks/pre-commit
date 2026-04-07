@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Pre-commit hook: enforce contract integrity before every commit.
+#
+# Install: git config core.hooksPath .githooks
+set -euo pipefail
+
+STAGED=$(git diff --cached --name-only)
+ERRORS=0
+
+# 1. Shared constants: if shared/*.json changed, generated files must be updated
+if echo "$STAGED" | grep -q "^shared/"; then
+    echo "[pre-commit] Checking shared constants..."
+    if ! python3 scripts/generate-shared-constants.py --check 2>/dev/null; then
+        echo "BLOCKED: shared/*.json changed but generated constants are stale."
+        echo "Run: python3 scripts/generate-shared-constants.py"
+        echo "Then: git add src/screenshot_processor/core/generated_constants.py frontend/src/core/generated/constants.ts frontend/src-tauri/src/processing/generated_constants.rs"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# 2. API types: if Pydantic schemas or routes changed, OpenAPI types must be updated
+if echo "$STAGED" | grep -qE "schemas\.py|routes/.*\.py"; then
+    echo "[pre-commit] Checking API type sync..."
+    if ! scripts/check-api-types.sh 2>/dev/null; then
+        echo "BLOCKED: API schemas changed but frontend types are stale."
+        echo "Run: cd frontend && bun run generate:api-types"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# 3. Tauri IPC contract: if Rust types or TS interface changed
+if echo "$STAGED" | grep -qE "crates/processing/src/types\.rs|processing/types\.rs|TauriProcessingService\.ts"; then
+    echo "[pre-commit] Checking Tauri IPC contract..."
+    if ! python3 scripts/check-tauri-contract.py 2>/dev/null; then
+        echo "BLOCKED: Tauri IPC contract drift detected."
+        echo "Sync ProcessingResult (Rust) with RustProcessingResult (TypeScript)."
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+if [ "$ERRORS" -gt 0 ]; then
+    echo ""
+    echo "Commit blocked by $ERRORS contract check(s). Fix and re-stage."
+    exit 1
+fi
