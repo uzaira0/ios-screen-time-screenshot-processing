@@ -1505,7 +1505,7 @@ async def upload_screenshots_batch(
     # 1. Decode/validate all images in parallel
     # 2. Write all files in parallel
     # 3. Single bulk INSERT for all screenshots
-    # 4. Queue Celery tasks in bulk
+    # 4. Queue workflow tasks in bulk
     import time
 
     t_start = time.perf_counter()
@@ -1735,7 +1735,7 @@ async def upload_screenshots_batch(
 
     timings["db_insert"] = (time.perf_counter() - t1) * 1000
 
-    # Phase 4: Queue Celery tasks and build results
+    # Phase 4: Queue workflow tasks and build results
     t1 = time.perf_counter()
     screenshot_ids_to_queue = []
 
@@ -1840,7 +1840,7 @@ async def preprocess_screenshot(
     current_user: CurrentUser,
 ):
     """Queue preprocessing task for a single screenshot."""
-    # Verify screenshot exists — concurrent preprocessing is guarded by NOWAIT locks in the Celery task
+    # Verify screenshot exists — concurrent preprocessing is guarded by NOWAIT locks in the workflow activity
     await get_screenshot_or_404(repo, screenshot_id)
 
     try:
@@ -2544,7 +2544,7 @@ async def upload_browser(
 
     Uses X-Username auth (CurrentUser), NOT X-API-Key.
     Accepts metadata as a JSON string plus one or more image files.
-    Does not queue Celery tasks — user triggers stages manually.
+    Does not queue workflow tasks — user triggers stages manually.
     """
     import json
 
@@ -2662,7 +2662,7 @@ async def upload_browser(
                 screenshot_id = result.fetchone()[0]
                 await db.flush()
 
-                # Initialize preprocessing metadata (no Celery tasks)
+                # Initialize preprocessing metadata (no background tasks)
                 from sqlalchemy.orm.attributes import flag_modified as _flag_modified
 
                 screenshot = await get_screenshot_or_404(repo, screenshot_id)

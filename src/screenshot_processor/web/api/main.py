@@ -173,12 +173,12 @@ async def root():
 
 
 @app.get("/health", response_model=HealthCheckResponse)
-async def health_check(db: AsyncSession = Depends(get_db), include_celery: bool = False):
+async def health_check(db: AsyncSession = Depends(get_db), include_worker: bool = False):
     """
     Comprehensive health check endpoint.
 
     Returns health status including database connectivity.
-    Set include_celery=true to also check Celery worker availability.
+    Set include_worker=true to also check workflow worker availability.
     """
     health_status = "healthy"
     checks_dict = {}
@@ -193,7 +193,7 @@ async def health_check(db: AsyncSession = Depends(get_db), include_celery: bool 
         checks_dict["database"] = f"error: {e!s}"
 
     # Optional workflow worker health check
-    if include_celery:
+    if include_worker:
         checks_dict["workflow_worker"] = "health check not yet implemented"
 
     # Return appropriate status code

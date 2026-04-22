@@ -352,7 +352,7 @@ export function createPreprocessingStore(service: IPreprocessingService) {
         // Auto-detect running tasks across ALL stages and reconnect polling.
         // Must check all stages, not just activeStage — after a page refresh
         // the store resets to activeStage="device_detection" even if a different
-        // stage (e.g. phi_detection) is actively running on Celery workers.
+        // stage (e.g. phi_detection) is actively running on workflow workers.
         const alreadyPolling = get()._pollInterval !== null;
         if (!alreadyPolling) {
           const runningStage = STAGES.find((s) => (data[s]?.running ?? 0) > 0);
@@ -430,8 +430,8 @@ export function createPreprocessingStore(service: IPreprocessingService) {
         toast.success(result.message);
 
         // Check if the work already completed synchronously (device detection,
-        // cropping run in-process instead of Celery). The response message
-        // contains "completed" for sync stages, "queued" for async Celery stages.
+        // cropping run in-process). The response message
+        // contains "completed" for sync stages, "queued" for async workflow stages.
         const alreadyDone = config.isLocalMode || result.message?.includes("completed");
 
         if (alreadyDone) {
@@ -440,7 +440,7 @@ export function createPreprocessingStore(service: IPreprocessingService) {
           await get().loadScreenshots();
           await get().loadSummary();
         } else {
-          // Server mode async: work is queued on Celery — poll for completion.
+          // Server mode async: work is queued on workflow worker — poll for completion.
           set({
             stageProgress: { completed: 0, total: result.queued_count },
             _queuedCount: result.queued_count,
@@ -486,7 +486,7 @@ export function createPreprocessingStore(service: IPreprocessingService) {
           .then((res) => { toast.success(res?.message ?? `${stageLabel} cancelled`, { id: "stage-cancel" }); afterCancel(); })
           .catch((err) => { toast.error(err instanceof Error ? err.message : "Failed to cancel", { id: "stage-cancel" }); afterCancel(); });
       } else {
-        // Reset stage to pending — Celery tasks that finish will see reset status
+        // Reset stage to pending — workflow activities that finish will see reset status
         service.resetStage(_pollStage, selectedGroupId)
           .then((res) => { toast.success(res?.message ?? `${stageLabel} stopped`, { id: "stage-cancel" }); afterCancel(); })
           .catch((err) => { toast.error(err instanceof Error ? err.message : "Failed to stop", { id: "stage-cancel" }); afterCancel(); });
@@ -621,7 +621,7 @@ export function createPreprocessingStore(service: IPreprocessingService) {
             }
           }
         }
-        // Surface Celery queue failures — the response may include processing_queued
+        // Surface queue failures — the response may include processing_queued
         // when the backend attempts background processing (e.g. programmatic uploads).
         const raw = result as Record<string, unknown>;
         if ("processing_queued" in raw && raw.processing_queued === false) {
@@ -731,7 +731,7 @@ export function createPreprocessingStore(service: IPreprocessingService) {
         const completedSoFar = stageSummary ? stageSummary.completed : 0;
         const batchCompleted = Math.max(0, completedSoFar - baseline);
         // Wait at least 3 polls (6s) before concluding "done" to give
-        // Celery workers time to pick up tasks and set status to "running"
+        // workflow workers time to pick up activities and set status to "running"
         const minPollsBeforeComplete = 3;
         const allDone = stageSummary &&
           stageSummary.running === 0 &&

@@ -36,7 +36,7 @@ export interface paths {
          * @description Comprehensive health check endpoint.
          *
          *     Returns health status including database connectivity.
-         *     Set include_celery=true to also check Celery worker availability.
+         *     Set include_worker=true to also check workflow worker availability.
          */
         get: operations["health_check_health_get"];
         put?: never;
@@ -777,11 +777,7 @@ export interface paths {
         put?: never;
         /**
          * Cancel Phi Detection Stage
-         * @description Revoke queued/running PHI detection tasks and reset affected screenshots to pending.
-         *
-         *     Accepts task_ids (from the original dispatch response) to revoke specific tasks.
-         *     Also resets any screenshots in the group that are still marked 'running' back to
-         *     'pending' so they can be re-queued.
+         * @description Cancel running/pending preprocessing workflows for screenshots in the group.
          */
         post: operations["cancel_phi_detection_stage_api_v1_screenshots_preprocess_stage_phi_detection_cancel_post"];
         delete?: never;
@@ -913,7 +909,7 @@ export interface paths {
          *
          *     Uses X-Username auth (CurrentUser), NOT X-API-Key.
          *     Accepts metadata as a JSON string plus one or more image files.
-         *     Does not queue Celery tasks — user triggers stages manually.
+         *     Does not queue workflow tasks — user triggers stages manually.
          */
         post: operations["upload_browser_api_v1_screenshots_upload_browser_post"];
         delete?: never;
@@ -1439,11 +1435,11 @@ export interface paths {
         put?: never;
         /**
          * Bulk Reprocess Screenshots
-         * @description Queue screenshots for reprocessing via Celery workers.
+         * @description Queue screenshots for reprocessing via workflow workers.
          *
          *     This will reprocess all screen_time screenshots in the specified group
          *     (or all groups if not specified) using the updated processing code.
-         *     Uses Celery for background processing to avoid blocking the API.
+         *     Uses workflow engine for background processing to avoid blocking the API.
          *
          *     Admin only.
          */
@@ -1469,9 +1465,9 @@ export interface paths {
          *
          *     This endpoint:
          *     1. Optionally marks all PROCESSING screenshots as FAILED (they're stuck/orphaned)
-         *     2. Requeues all PENDING screenshots to Celery for processing
+         *     2. Requeues all PENDING screenshots for processing via workflow engine
          *
-         *     Use this when screenshots are stuck and not being processed by Celery workers.
+         *     Use this when screenshots are stuck and not being processed by workflow workers.
          *     Admin only.
          */
         post: operations["retry_stuck_screenshots_api_v1_admin_retry_stuck_post"];
@@ -2356,7 +2352,7 @@ export interface components {
             stage?: string | null;
             /**
              * Task Ids
-             * @description Celery task IDs to cancel (used by cancel endpoint).
+             * @description Task IDs to cancel (used by cancel endpoint).
              */
             task_ids?: string[];
             /**
@@ -2405,7 +2401,7 @@ export interface components {
             stage?: string | null;
             /**
              * Task Ids
-             * @description Celery task IDs to cancel (used by cancel endpoint).
+             * @description Task IDs to cancel (used by cancel endpoint).
              */
             task_ids?: string[];
             /**
@@ -2465,7 +2461,7 @@ export interface components {
             stage?: string | null;
             /**
              * Task Ids
-             * @description Celery task IDs to cancel (used by cancel endpoint).
+             * @description Task IDs to cancel (used by cancel endpoint).
              */
             task_ids?: string[];
             /**
@@ -3500,7 +3496,7 @@ export interface components {
             stage?: string | null;
             /**
              * Task Ids
-             * @description Celery task IDs to cancel (used by cancel endpoint).
+             * @description Task IDs to cancel (used by cancel endpoint).
              */
             task_ids?: string[];
             /**
@@ -3532,7 +3528,7 @@ export interface components {
             stage?: string | null;
             /**
              * Task Ids
-             * @description Celery task IDs to cancel (used by cancel endpoint).
+             * @description Task IDs to cancel (used by cancel endpoint).
              */
             task_ids?: string[];
         };
@@ -3775,7 +3771,7 @@ export interface operations {
     health_check_health_get: {
         parameters: {
             query?: {
-                include_celery?: boolean;
+                include_worker?: boolean;
             };
             header?: never;
             path?: never;

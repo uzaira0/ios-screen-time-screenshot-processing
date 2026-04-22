@@ -8,7 +8,7 @@
  *   4. PHI redaction — Canvas-based redbox/blackbox/pixelate
  *
  * Data is stored in IndexedDB via the storage service.
- * Processing is synchronous (no Celery) — runStage() returns after completion.
+ * Processing is synchronous (no backend) — runStage() returns after completion.
  */
 
 import type {

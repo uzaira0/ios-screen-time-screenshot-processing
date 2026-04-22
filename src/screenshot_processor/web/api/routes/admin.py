@@ -370,11 +370,11 @@ async def bulk_reprocess_screenshots(
     limit: int = Query(default=1000, ge=1, le=5000, description="Max screenshots to reprocess"),
 ):
     """
-    Queue screenshots for reprocessing via Celery workers.
+    Queue screenshots for reprocessing via workflow workers.
 
     This will reprocess all screen_time screenshots in the specified group
     (or all groups if not specified) using the updated processing code.
-    Uses Celery for background processing to avoid blocking the API.
+    Uses workflow engine for background processing to avoid blocking the API.
 
     Admin only.
     """
@@ -409,7 +409,7 @@ async def bulk_reprocess_screenshots(
         return BulkReprocessResponse(
             success=True,
             queued=len(screenshot_ids),
-            message=f"Queued {len(screenshot_ids)} screenshots for Celery reprocessing (max_shift={max_shift})",
+            message=f"Queued {len(screenshot_ids)} screenshots for reprocessing (max_shift={max_shift})",
         )
 
     except Exception as e:
@@ -451,9 +451,9 @@ async def retry_stuck_screenshots(
 
     This endpoint:
     1. Optionally marks all PROCESSING screenshots as FAILED (they're stuck/orphaned)
-    2. Requeues all PENDING screenshots to Celery for processing
+    2. Requeues all PENDING screenshots for processing via workflow engine
 
-    Use this when screenshots are stuck and not being processed by Celery workers.
+    Use this when screenshots are stuck and not being processed by workflow workers.
     Admin only.
     """
     try:

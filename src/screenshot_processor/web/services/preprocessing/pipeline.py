@@ -149,7 +149,7 @@ def preprocess_screenshot_sync(
 ) -> dict:
     """Run preprocessing on a screenshot and update DB metadata.
 
-    This is the Celery-compatible sync function. It:
+    This is the sync function used by workflow activities. It:
     1. Runs the full preprocessing pipeline
     2. Saves the preprocessed image alongside the original
     3. Updates processing_metadata JSON with preprocessing results

@@ -3,7 +3,7 @@ Screenshot processing service — the web/API entry point for processing.
 
 Canonical processing path (web/API):
     1. process_screenshot_async() or process_screenshot_sync()
-       - Async (FastAPI) / sync (Celery) wrappers that handle DB commits.
+       - Async (FastAPI) / sync (workflow activity) wrappers that handle DB commits.
     2. process_screenshot_file()
        - Core sync function in THIS module. No DB operations.
        - First attempts the Rust fast-path (rust_accelerator).
@@ -512,7 +512,7 @@ async def process_screenshot_async(
 
 
 # =============================================================================
-# Sync wrapper for Celery
+# Sync wrapper for workflow activities
 # =============================================================================
 
 
@@ -525,7 +525,7 @@ def process_screenshot_sync(
     force: bool = False,
 ) -> dict:
     """
-    Process a screenshot and save to database. Sync version for Celery.
+    Process a screenshot and save to database. Sync version for workflow activities.
 
     Args:
         db: Sync database session

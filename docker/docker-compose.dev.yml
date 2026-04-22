@@ -32,8 +32,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: ios-screen-time-screenshot-processing-postgres-dev
-    ports:
-      - "127.0.0.1:5436:5432"
+    # No host port — access via docker exec or internal network only
     volumes:
       - postgres_dev_data:/var/lib/postgresql/data
       # Init script creates test database on first startup
@@ -67,8 +66,7 @@ services:
       context: ..
       dockerfile: docker/backend/Dockerfile.dev
     container_name: ios-screen-time-screenshot-processing-backend-dev
-    ports:
-      - "8002:8000"
+    # No host port — routed via Traefik at /ios-screen-time-screenshot-processing/api/
     volumes:
       # Mount source code for hot reloading
       - ../src:/app/src:ro
@@ -160,8 +158,7 @@ services:
       context: ..
       dockerfile: docker/frontend/Dockerfile.dev
     container_name: ios-screen-time-screenshot-processing-frontend-dev
-    ports:
-      - "5175:5173"
+    # No host port — routed via Traefik at /ios-screen-time-screenshot-processing/
     volumes:
       # Mount source code for live reloading
       - ../frontend/src:/app/src
