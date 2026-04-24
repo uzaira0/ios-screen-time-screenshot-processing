@@ -78,14 +78,19 @@ export async function recognizeFullImage(
   const text = data.text;
   const words = getWordsFromPage(data);
 
-  const upper = text.toUpperCase();
+  // Parity: Rust is_daily_total_page() counts once per OCR word (break after first
+  // marker match per word) to prevent double-counting when one word contains
+  // multiple markers (e.g. "TODAY" matching both "DAY" and "TODAY").
   let dailyCount = 0;
   let appCount = 0;
-  for (const marker of PAGE_MARKER_WORDS_DAILY) {
-    if (upper.includes(marker)) dailyCount++;
-  }
-  for (const marker of PAGE_MARKER_WORDS_APP) {
-    if (upper.includes(marker)) appCount++;
+  for (const word of words) {
+    const upper = word.text.toUpperCase();
+    for (const marker of PAGE_MARKER_WORDS_DAILY) {
+      if (upper.includes(marker)) { dailyCount++; break; }
+    }
+    for (const marker of PAGE_MARKER_WORDS_APP) {
+      if (upper.includes(marker)) { appCount++; break; }
+    }
   }
   const isDaily = dailyCount > appCount;
 
@@ -204,8 +209,8 @@ export async function findScreenshotTitle(
   let appExtractRect: Rect;
 
   if (foundInfo) {
-    // Server: app_height = info_rect[3] * 7
-    const appHeight = infoHeight * 7;
+    // Parity: Rust uses info.h * 4 to avoid picking up text below the title.
+    const appHeight = infoHeight * 4;
     const titleOriginY = infoTop + infoHeight;
     const xOrigin = infoLeft + Math.floor(1.5 * infoWidth);
     const xWidth = xOrigin + Math.floor(infoWidth * 12);

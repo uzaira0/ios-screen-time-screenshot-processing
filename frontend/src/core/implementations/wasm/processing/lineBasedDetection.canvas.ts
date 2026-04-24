@@ -405,7 +405,15 @@ function findGridEdges(
 
   if (clusters.length < 2) return { left: null, right: null };
 
-  return { left: clusters[0]!, right: clusters[clusters.length - 1]! };
+  // Parity: Rust picks clusters closest to the search window boundaries, not
+  // first/last — using first/last picks up gray UI elements at the extreme edges
+  // as false grid boundaries (see line_based.rs find_grid_edges comment).
+  const left = clusters.reduce((best, c) => Math.abs(c - xStart) < Math.abs(best - xStart) ? c : best, clusters[0]!);
+  const right = clusters.reduce((best, c) => Math.abs(c - xEnd) < Math.abs(best - xEnd) ? c : best, clusters[clusters.length - 1]!);
+
+  if (right <= left) return { left: null, right: null };
+
+  return { left, right };
 }
 
 function refineXBoundaries(
