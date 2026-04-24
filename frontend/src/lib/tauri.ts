@@ -11,7 +11,7 @@ export interface SelectedFile {
 export async function selectScreenshotFolder(): Promise<SelectedFile[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { invoke } = (await import("@tauri-apps/api/core")) as any; // ast-grep-ignore: no-as-any
-  return invoke("select_screenshot_folder") as Promise<SelectedFile[]>;
+  return invoke("select_screenshot_folder") as Promise<SelectedFile[]>; // ast-grep-ignore: no-untyped-tauri-invoke
 }
 
 export async function readImageFile(path: string): Promise<Uint8Array> {

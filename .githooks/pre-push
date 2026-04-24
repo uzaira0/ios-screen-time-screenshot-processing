@@ -42,7 +42,7 @@ if ! bandit -r src/ -ll -ii -q 2>&1; then
 fi
 
 echo "[pre-push] pip-audit..."
-if ! pip-audit --no-deps -q 2>&1; then
+if ! pip-audit --path .venv 2>&1; then
     echo "BLOCKED: pip-audit found vulnerabilities in Python dependencies."
     ERRORS=$((ERRORS + 1))
 fi

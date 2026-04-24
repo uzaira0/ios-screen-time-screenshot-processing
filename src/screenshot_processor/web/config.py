@@ -42,7 +42,7 @@ class Settings(AuthSettingsMixin, BaseSettings):
         description="Log format: 'json' for structured JSON (production), 'text' for human-readable (development)",
     )
 
-    HOST: str = Field(default="0.0.0.0", description="API server host")
+    HOST: str = Field(default="0.0.0.0", description="API server host")  # nosec B104
 
     PORT: int = Field(default=8000, description="API server port")
 

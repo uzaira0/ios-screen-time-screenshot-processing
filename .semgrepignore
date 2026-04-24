@@ -1,5 +1,7 @@
 tests/
 docs/
+node_modules/
 frontend/node_modules/
+scripts/node_modules/
 *.md
 alembic/versions/

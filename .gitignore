@@ -1,3 +1,6 @@
+# Node
+node_modules/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -271,3 +274,6 @@ test-results/
 # OpenAPI spec (generated)
 frontend/openapi.json
 openapi.json
+
+# Benchmark wasm-pack Node output (benchmark-wasm-paths.mjs)
+scripts/.bench-wasm-a/

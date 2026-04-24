@@ -1,0 +1,10 @@
+ruleDirs:
+  - .ast-grep/rules/typescript
+  - .ast-grep/rules/rust
+  - .ast-grep/rules/python
+
+ignoreFiles:
+  - node_modules
+  - "**/node_modules/**"
+  - scripts/node_modules
+  - frontend/node_modules
