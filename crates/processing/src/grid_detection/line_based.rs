@@ -25,7 +25,6 @@ const GRID_LINE_GRAY_MAX: u8 = 220;
 /// 2. Find horizontal line groups
 /// 3. Validate with vertical line count (4-5 = daily, 7+ = weekly)
 /// 4. Refine x boundaries using actual grid edges
-/// Detect grid using the combined line-based strategy.
 ///
 /// IMPORTANT: Caller must have already applied `convert_dark_mode()` to the image.
 /// This function does NOT clone or re-convert the image.
@@ -51,7 +50,7 @@ pub fn detect(img: &RgbImage) -> Result<GridDetectionResult, ProcessingError> {
 
     // Step 2: Find horizontal lines
     let x_end = (x_start + width).min(w);
-    let lines = find_horizontal_lines(&img, x_start, x_end);
+    let lines = find_horizontal_lines(img, x_start, x_end);
 
     if lines.len() < 4 {
         return Ok(GridDetectionResult {
@@ -88,14 +87,14 @@ pub fn detect(img: &RgbImage) -> Result<GridDetectionResult, ProcessingError> {
 
         // Step 3a: Validate vertical line pattern (daily = 3-5 lines)
         let (is_daily, confidence, _v_count, v_positions) =
-            validate_vertical_lines(&img, x_start, width, y_start, y_end);
+            validate_vertical_lines(img, x_start, width, y_start, y_end);
 
         if !is_daily {
             continue;
         }
 
         // Step 3b: Color validation — reject pickups charts (cyan bars)
-        let (color_valid, _color_conf) = validate_bar_colors(&img, x_start, width, y_start, y_end);
+        let (color_valid, _color_conf) = validate_bar_colors(img, x_start, width, y_start, y_end);
         if !color_valid {
             continue;
         }
@@ -114,7 +113,7 @@ pub fn detect(img: &RgbImage) -> Result<GridDetectionResult, ProcessingError> {
     match best_result {
         Some((bounds, confidence, v_positions)) => {
             // Step 4: Refine x boundaries
-            let refined = refine_x_boundaries(&img, &bounds, &v_positions);
+            let refined = refine_x_boundaries(img, &bounds, &v_positions);
 
             Ok(GridDetectionResult {
                 success: true,
@@ -208,7 +207,7 @@ fn find_grid_edges(
         for y in y_start..y_end.min(h) {
             let idx = y as usize * stride + x as usize * 3;
             let luma = fast_luma(raw[idx], raw[idx + 1], raw[idx + 2]);
-            if luma >= GRID_LINE_GRAY_MIN && luma <= GRID_LINE_GRAY_MAX {
+            if (GRID_LINE_GRAY_MIN..=GRID_LINE_GRAY_MAX).contains(&luma) {
                 count += 1;
             }
         }

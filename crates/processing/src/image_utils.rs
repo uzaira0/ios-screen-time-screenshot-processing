@@ -165,9 +165,9 @@ fn image_mean_fast(img: &RgbImage) -> f64 {
 pub fn adjust_contrast_brightness(img: &RgbImage, contrast: f64, brightness: i32) -> RgbImage {
     let adjusted_brightness = brightness as f64 + (255.0 * (1.0 - contrast) / 2.0).round();
     let mut lut = [0u8; 256];
-    for i in 0..256 {
+    for (i, slot) in lut.iter_mut().enumerate() {
         let val = (i as f64 * contrast + adjusted_brightness).round();
-        lut[i] = val.clamp(0.0, 255.0) as u8;
+        *slot = val.clamp(0.0, 255.0) as u8;
     }
     let mut out = img.clone();
     for byte in out.as_mut().iter_mut() {

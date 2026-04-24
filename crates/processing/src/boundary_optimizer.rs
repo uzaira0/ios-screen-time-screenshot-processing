@@ -68,10 +68,8 @@ pub fn parse_ocr_total(ocr_total: &str) -> Option<i32> {
     }
 
     // Seconds-only → rounds to 0 minutes
-    if total_minutes == 0 {
-        if RE_SECONDS.is_match(&text) {
-            return Some(0);
-        }
+    if total_minutes == 0 && RE_SECONDS.is_match(&text) {
+        return Some(0);
     }
 
     if total_minutes > 0 {
@@ -219,7 +217,7 @@ pub fn optimize_boundaries(
                 initial_bounds.height() as u32,
             ) as i32;
             return OptimizationResult {
-                bounds: initial_bounds.clone(),
+                bounds: *initial_bounds,
                 bar_total_minutes: bar_total,
                 ocr_total_minutes: 0,
                 corrected_total: ocr_total.to_string(),
@@ -236,7 +234,7 @@ pub fn optimize_boundaries(
     // This gives 4x precision on every iteration with zero per-iteration allocation.
     let (scaled_data, scaled_width, _scaled_height) = preprocess_for_optimizer(img);
 
-    let mut best_bounds = initial_bounds.clone();
+    let mut best_bounds = *initial_bounds;
     let mut best_diff = i32::MAX;
     let mut best_bar_total = 0i32;
     let mut best_shift_x = 0i32;

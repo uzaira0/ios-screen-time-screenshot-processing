@@ -6,6 +6,7 @@
 //!
 //! Build via: scripts/build-wasm-emscripten.sh
 #![allow(unsafe_code)]
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::{alloc, ffi::CStr, ptr, slice, sync::Once};
 

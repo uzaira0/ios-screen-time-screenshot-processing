@@ -127,6 +127,7 @@ pub enum ImageType {
 }
 
 impl ImageType {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "battery" => ImageType::Battery,
@@ -144,6 +145,7 @@ pub enum DetectionMethod {
 }
 
 impl DetectionMethod {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "ocr_anchored" => DetectionMethod::OcrAnchored,

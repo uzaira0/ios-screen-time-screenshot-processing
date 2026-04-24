@@ -262,7 +262,7 @@ pub fn compute_bar_alignment_score(roi: &RgbImage, hourly_values: &[f64]) -> f64
     }
 
     // Ensure exactly 24 values
-    let mut values = vec![0.0f64; 24];
+    let mut values = [0.0f64; 24];
     for (i, &v) in hourly_values.iter().take(24).enumerate() {
         values[i] = v;
     }
@@ -286,7 +286,7 @@ pub fn compute_bar_alignment_score(roi: &RgbImage, hourly_values: &[f64]) -> f64
             for x in mid_start..mid_end {
                 let idx = row_off + x * 3;
                 let (h, s, v) = rgb_to_hsv(raw[idx], raw[idx + 1], raw[idx + 2]);
-                if h >= 90 && h <= 130 && s > 50 && v > 100 {
+                if (90..=130).contains(&h) && s > 50 && v > 100 {
                     has_blue = true;
                     break;
                 }

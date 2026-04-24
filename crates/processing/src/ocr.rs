@@ -652,7 +652,7 @@ pub fn extract_from_words(
     } else {
         raw_title
     };
-    let total = extract_total(&stub, words).unwrap_or(String::new());
+    let total = extract_total(&stub, words).unwrap_or_default();
     (title, title_y, total)
 }
 

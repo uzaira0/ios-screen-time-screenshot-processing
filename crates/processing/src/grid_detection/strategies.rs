@@ -64,7 +64,7 @@ pub fn find_horizontal_lines(img: &RgbImage, x_start: u32, x_end: u32) -> Vec<i3
         for x in x_start..x_end {
             let idx = row_offset + x as usize * 3;
             let luma = fast_luma(raw[idx], raw[idx + 1], raw[idx + 2]);
-            if luma >= GRAY_MIN && luma <= GRAY_MAX {
+            if (GRAY_MIN..=GRAY_MAX).contains(&luma) {
                 gray_count += 1;
             }
         }
@@ -97,7 +97,7 @@ pub fn find_evenly_spaced_groups(lines: &[i32], expected_height: Option<i32>) ->
             if max_dev > MAX_SPACING_DEVIATION as f64 {
                 continue;
             }
-            if mean_spacing < 20.0 || mean_spacing > 150.0 {
+            if !(20.0..=150.0).contains(&mean_spacing) {
                 continue;
             }
 
@@ -173,7 +173,7 @@ pub fn count_vertical_lines(
         for y in y_start..y_end.min(img.height()) {
             let idx = y as usize * stride + x as usize * 3;
             let luma = fast_luma(raw[idx], raw[idx + 1], raw[idx + 2]);
-            if luma >= V_GRAY_MIN && luma <= V_GRAY_MAX {
+            if (V_GRAY_MIN..=V_GRAY_MAX).contains(&luma) {
                 gray_count += 1;
             }
         }
@@ -306,9 +306,9 @@ pub fn validate_bar_colors(
                 continue;
             }
 
-            if h >= BLUE_HUE_MIN && h <= BLUE_HUE_MAX {
+            if (BLUE_HUE_MIN..=BLUE_HUE_MAX).contains(&h) {
                 blue_count += 1;
-            } else if h >= CYAN_HUE_MIN && h < BLUE_HUE_MIN {
+            } else if (CYAN_HUE_MIN..BLUE_HUE_MIN).contains(&h) {
                 cyan_count += 1;
             }
         }
