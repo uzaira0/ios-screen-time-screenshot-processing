@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Pre-commit hook: enforce contract integrity before every commit.
+# Pre-commit hook: contract integrity + fast format checks on staged files.
 #
 # Install: git config core.hooksPath .githooks
 set -euo pipefail
 
 STAGED=$(git diff --cached --name-only)
 ERRORS=0
+
+# ── Contract integrity ────────────────────────────────────────────────────
 
 # 1. Shared constants: if shared/*.json changed, generated files must be updated
 if echo "$STAGED" | grep -q "^shared/"; then
@@ -38,8 +40,35 @@ if echo "$STAGED" | grep -qE "crates/processing/src/types\.rs|processing/types\.
     fi
 fi
 
+# ── Format checks (staged files only) ────────────────────────────────────
+# Use NUL-delimited arrays so filenames with spaces are handled correctly.
+
+mapfile -d '' STAGED_PY < <(git diff --cached --name-only -z | grep --null-data '\.py$' || true)
+mapfile -d '' STAGED_RS < <(git diff --cached --name-only -z | grep --null-data '\.rs$' || true)
+
+if (( ${#STAGED_PY[@]} > 0 )); then
+    echo "[pre-commit] ruff format check..."
+    if ! ruff format --check "${STAGED_PY[@]}" 2>&1; then
+        echo "BLOCKED: Python files need formatting. Run: ruff format ${STAGED_PY[*]}"
+        ERRORS=$((ERRORS + 1))
+    fi
+    echo "[pre-commit] ruff lint..."
+    if ! ruff check "${STAGED_PY[@]}" 2>&1; then
+        echo "BLOCKED: ruff lint errors. Run: ruff check --fix ${STAGED_PY[*]}"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+if (( ${#STAGED_RS[@]} > 0 )); then
+    echo "[pre-commit] rustfmt check..."
+    if ! rustfmt --check "${STAGED_RS[@]}" 2>&1; then
+        echo "BLOCKED: Rust files need formatting. Run: rustfmt ${STAGED_RS[*]}"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
 if [ "$ERRORS" -gt 0 ]; then
     echo ""
-    echo "Commit blocked by $ERRORS contract check(s). Fix and re-stage."
+    echo "Commit blocked by $ERRORS check(s). Fix and re-stage."
     exit 1
 fi

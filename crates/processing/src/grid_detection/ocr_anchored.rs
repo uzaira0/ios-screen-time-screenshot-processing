@@ -13,7 +13,7 @@ use crate::{
         adjust_contrast_brightness, convert_dark_mode_for_ocr, extract_line, get_pixel,
         is_dark_mode,
     },
-    ocr::{OcrWord, run_tesseract},
+    ocr::{run_tesseract, OcrWord},
     types::{GridDetectionResult, ProcessingError},
 };
 

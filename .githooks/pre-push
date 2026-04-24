@@ -19,9 +19,10 @@ if ! cargo fmt --all -- --check 2>&1; then
 fi
 
 echo "[pre-push] cargo clippy..."
-# Exclude the Tauri desktop app (ios-screen-time) — it requires GTK/glib system
-# libraries which are only present on desktop build machines, not CI servers.
-if ! cargo clippy --workspace --all-targets --exclude ios-screen-time -- -D warnings 2>&1; then
+# Lint only the processing library without OCR (no Tesseract required) and
+# without the Tauri app (requires GTK/glib). Native system libraries are not
+# present on headless build servers; CI runners build with full toolchain.
+if ! cargo clippy -p ios-screen-time-image-pipeline --no-default-features -- -D warnings 2>&1; then
     echo "BLOCKED: clippy errors."
     ERRORS=$((ERRORS + 1))
 fi
