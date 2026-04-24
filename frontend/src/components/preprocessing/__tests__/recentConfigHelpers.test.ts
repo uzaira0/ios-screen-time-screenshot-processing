@@ -68,7 +68,7 @@ function phiEvent(
     event_id: Math.floor(Math.random() * 1000),
     stage: "phi_detection",
     timestamp,
-    source: "auto",
+    source: "manual",
     params: {},
     result: {
       phi_detected: regions.length > 0,
@@ -265,7 +265,9 @@ describe("getRecentPHIConfigs", () => {
 
   test("deduplicates configs with same regions (within 20px snap)", () => {
     const regionsA = [{ x: 100, y: 200, w: 300, h: 50, label: "PERSON" }];
-    const regionsB = [{ x: 105, y: 195, w: 310, h: 45, label: "PERSON" }]; // within 20px
+    // snap(v) = Math.round(v/20)*20; values must round to the SAME grid point.
+    // snap(105)=100, snap(195)=200, snap(308)=300, snap(55)=60 → all match A.
+    const regionsB = [{ x: 105, y: 195, w: 308, h: 55, label: "PERSON" }];
     const screenshots = [
       makeScreenshot(1, [phiEvent(regionsA, "2025-01-02T00:00:00Z")]),
       makeScreenshot(2, [phiEvent(regionsB, "2025-01-01T00:00:00Z")]),

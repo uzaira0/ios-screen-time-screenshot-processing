@@ -1,0 +1,4 @@
+[test]
+# Only run bun unit tests in src/. Playwright e2e specs live in tests/
+# and are run separately via `bun run test:e2e`.
+root = "./src"

@@ -365,6 +365,32 @@ function validateColorRegion(
 // Step 5: Refine x-boundaries (ported from combined.py)
 // ---------------------------------------------------------------------------
 
+/**
+ * Given a sorted list of cluster centroids and a search window [xStart, xEnd],
+ * picks the cluster nearest to xStart as the left edge and nearest to xEnd as
+ * the right edge. Returns null if fewer than 2 clusters or right <= left.
+ *
+ * Parity: Rust find_grid_edges() uses the same nearest-to-boundary selection
+ * (not first/last) to avoid picking up gray UI chrome at the extreme window edges.
+ */
+export function selectBoundaryClusters(
+  clusters: number[],
+  xStart: number,
+  xEnd: number,
+): { left: number; right: number } | null {
+  if (clusters.length < 2) return null;
+  const left = clusters.reduce(
+    (best, c) => (Math.abs(c - xStart) < Math.abs(best - xStart) ? c : best),
+    clusters[0]!,
+  );
+  const right = clusters.reduce(
+    (best, c) => (Math.abs(c - xEnd) < Math.abs(best - xEnd) ? c : best),
+    clusters[clusters.length - 1]!,
+  );
+  if (right <= left) return null;
+  return { left, right };
+}
+
 function findGridEdges(
   gray: Uint8Array,
   imgWidth: number,
@@ -405,15 +431,9 @@ function findGridEdges(
 
   if (clusters.length < 2) return { left: null, right: null };
 
-  // Parity: Rust picks clusters closest to the search window boundaries, not
-  // first/last — using first/last picks up gray UI elements at the extreme edges
-  // as false grid boundaries (see line_based.rs find_grid_edges comment).
-  const left = clusters.reduce((best, c) => Math.abs(c - xStart) < Math.abs(best - xStart) ? c : best, clusters[0]!);
-  const right = clusters.reduce((best, c) => Math.abs(c - xEnd) < Math.abs(best - xEnd) ? c : best, clusters[clusters.length - 1]!);
-
-  if (right <= left) return { left: null, right: null };
-
-  return { left, right };
+  const result = selectBoundaryClusters(clusters, xStart, xEnd);
+  if (!result) return { left: null, right: null };
+  return result;
 }
 
 function refineXBoundaries(

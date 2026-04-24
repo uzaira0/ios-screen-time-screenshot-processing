@@ -78,21 +78,7 @@ export async function recognizeFullImage(
   const text = data.text;
   const words = getWordsFromPage(data);
 
-  // Parity: Rust is_daily_total_page() counts once per OCR word (break after first
-  // marker match per word) to prevent double-counting when one word contains
-  // multiple markers (e.g. "TODAY" matching both "DAY" and "TODAY").
-  let dailyCount = 0;
-  let appCount = 0;
-  for (const word of words) {
-    const upper = word.text.toUpperCase();
-    for (const marker of PAGE_MARKER_WORDS_DAILY) {
-      if (upper.includes(marker)) { dailyCount++; break; }
-    }
-    for (const marker of PAGE_MARKER_WORDS_APP) {
-      if (upper.includes(marker)) { appCount++; break; }
-    }
-  }
-  const isDaily = dailyCount > appCount;
+  const { isDaily } = classifyPageWords(words);
 
   return { text, words, isDaily };
 }
@@ -120,6 +106,29 @@ const PAGE_MARKER_WORDS_APP = [
   "DAILY",
   "AVERAGE",
 ];
+
+/**
+ * Pure helper: count daily-vs-app page markers across OCR words.
+ * Each word contributes at most 1 count per category (break after first match)
+ * to prevent double-counting when one word contains multiple markers.
+ * Equivalent to Rust is_daily_total_page() marker counting.
+ */
+export function classifyPageWords(
+  words: ReadonlyArray<{ text: string }>,
+): { dailyCount: number; appCount: number; isDaily: boolean } {
+  let dailyCount = 0;
+  let appCount = 0;
+  for (const word of words) {
+    const upper = word.text.toUpperCase();
+    for (const marker of PAGE_MARKER_WORDS_DAILY) {
+      if (upper.includes(marker)) { dailyCount++; break; }
+    }
+    for (const marker of PAGE_MARKER_WORDS_APP) {
+      if (upper.includes(marker)) { appCount++; break; }
+    }
+  }
+  return { dailyCount, appCount, isDaily: dailyCount > appCount };
+}
 
 /**
  * Determines if screenshot is a daily total page.
