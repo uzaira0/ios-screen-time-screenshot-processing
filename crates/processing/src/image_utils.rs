@@ -6,10 +6,9 @@
 //! Optimizations: raw buffer access, fused passes, LUT-based transforms,
 //! sampling for large-image pixel statistics.
 
-use image::RgbImage;
-
 #[cfg(test)]
 use image::Rgb;
+use image::RgbImage;
 
 /// Dark mode detection threshold (mean pixel value).
 const DARK_MODE_THRESHOLD: f64 = 100.0;
@@ -70,11 +69,12 @@ pub fn convert_dark_mode_for_ocr(img: &RgbImage) -> RgbImage {
     let mut i = 0;
     let mut pi = 0;
     while i + 2 < len {
-        // Invert then average to grayscale
-        let r = 255 - raw[i] as u16;
-        let g = 255 - raw[i + 1] as u16;
-        let b = 255 - raw[i + 2] as u16;
-        gray[pi] = ((r + g + b) / 3) as u8;
+        // Invert then convert to BT.601 grayscale matching canvas cvtColorToGray:
+        // Math.round(R*0.299 + G*0.587 + B*0.114) via high-precision integer coefficients.
+        let r = (255 - raw[i]) as u32;
+        let g = (255 - raw[i + 1]) as u32;
+        let b = (255 - raw[i + 2]) as u32;
+        gray[pi] = ((r * 19595 + g * 38469 + b * 7472 + 32768) >> 16) as u8;
         pi += 1;
         i += 3;
     }
@@ -152,7 +152,11 @@ fn image_mean_fast(img: &RgbImage) -> f64 {
         count += 1;
         i += step;
     }
-    if count == 0 { 0.0 } else { sum as f64 / count as f64 }
+    if count == 0 {
+        0.0
+    } else {
+        sum as f64 / count as f64
+    }
 }
 
 /// Adjust contrast and brightness, returning a NEW image.
@@ -212,17 +216,16 @@ pub fn remove_all_but(img: &mut RgbImage, color: [u8; 3], threshold: i32) {
     }
 }
 
-/// Zero out all non-white pixels (gray value ≤ 240 → black).
-/// Uses raw buffer access.
+/// Zero out all non-white pixels (BT.601 luma ≤ 240 → black).
+/// Uses BT.601 grayscale to match canvas `darkenNonWhite` behavior.
 pub fn darken_non_white(img: &mut RgbImage) {
     let raw = img.as_mut();
     let len = raw.len();
     let mut i = 0;
     while i + 2 < len {
-        // Threshold: (R+G+B)/3 > 240 means keep, else zero
-        // Equivalent: R+G+B > 720
-        let sum = raw[i] as u16 + raw[i + 1] as u16 + raw[i + 2] as u16;
-        if sum <= 720 {
+        // Canvas darkenNonWhite: cvtColorToGray uses (R*77+G*150+B*29)>>8, threshold > 240 = white.
+        let luma = (raw[i] as u32 * 77 + raw[i + 1] as u32 * 150 + raw[i + 2] as u32 * 29) >> 8;
+        if luma <= 240 {
             raw[i] = 0;
             raw[i + 1] = 0;
             raw[i + 2] = 0;
@@ -248,8 +251,9 @@ pub fn darken_and_binarize(img: &mut RgbImage) {
     let len = raw.len();
     let mut i = 0;
     while i + 2 < len {
-        let sum = raw[i] as u16 + raw[i + 1] as u16 + raw[i + 2] as u16;
-        if sum <= 720 {
+        // Canvas darkenNonWhite: cvtColorToGray uses (R*77+G*150+B*29)>>8, threshold > 240 = white.
+        let luma = (raw[i] as u32 * 77 + raw[i + 1] as u32 * 150 + raw[i + 2] as u32 * 29) >> 8;
+        if luma <= 240 {
             // darken: set to black
             raw[i] = 0;
             raw[i + 1] = 0;
@@ -467,6 +471,52 @@ mod tests {
         assert_eq!(img.get_pixel(2, 0), &Rgb([250, 250, 250]));
     }
 
+    // Parity: darken_non_white uses canvas cvtColorToGray formula: (R*77+G*150+B*29)>>8.
+    // Canvas: cvtColorToGray → threshold(gray, 240, 255) → if gray <= 240, black.
+    // The high-precision formula (R*19595+G*38469+B*7472+32768)>>16 can diverge from canvas
+    // for non-gray pixels near the 240 boundary. Use the exact canvas formula.
+    #[test]
+    fn parity_darken_non_white_canvas_luma_formula() {
+        let mut img = RgbImage::new(2, 1);
+        // (100, 200, 50): canvas luma = (100*77+200*150+50*29)>>8 = 39150>>8 = 152 ≤ 240 → black
+        // high-precision: (100*19595+200*38469+50*7472+32768)>>16 = 153 > 240? No, 153 ≤ 240 → same here
+        // But the formula is now exactly canvas to avoid divergence near threshold.
+        img.put_pixel(0, 0, Rgb([100, 200, 50]));
+        // (250, 245, 215): canvas luma = (250*77+245*150+215*29)>>8 = 62235>>8 = 243 > 240 → keep
+        img.put_pixel(1, 0, Rgb([250, 245, 215]));
+        darken_non_white(&mut img);
+        assert_eq!(
+            img.get_pixel(0, 0),
+            &Rgb([0, 0, 0]),
+            "canvas luma=152 ≤ 240 must darken"
+        );
+        assert_eq!(
+            img.get_pixel(1, 0),
+            &Rgb([250, 245, 215]),
+            "canvas luma=243 > 240 must keep"
+        );
+    }
+
+    // Parity: darken_non_white uses BT.601 luma, not simple (R+G+B)/3.
+    // Canvas: cvtColorToGray → threshold(gray, 240, 255) → if gray <= 240, black.
+    // The old simple-average formula would INCORRECTLY darken these non-gray pixels.
+    #[test]
+    fn parity_darken_non_white_bt601_threshold() {
+        let mut img = RgbImage::new(2, 1);
+        // (250, 245, 215): canvas (R*77+G*150+B*29)>>8 = 243 > 240 → keep
+        // simple avg: (250+245+215)/3 = 236 ≤ 240 → old code wrongly zeroed this
+        img.put_pixel(0, 0, Rgb([250, 245, 215]));
+        // (241, 241, 241): canvas luma = 241 > 240 → keep
+        img.put_pixel(1, 0, Rgb([241, 241, 241]));
+        darken_non_white(&mut img);
+        assert_eq!(
+            img.get_pixel(0, 0),
+            &Rgb([250, 245, 215]),
+            "BT.601>240 must keep non-gray near-white pixel"
+        );
+        assert_eq!(img.get_pixel(1, 0), &Rgb([241, 241, 241]));
+    }
+
     #[test]
     fn test_reduce_color_count_binary() {
         let mut img = RgbImage::new(4, 1);
@@ -538,5 +588,189 @@ mod tests {
         assert_eq!(img.get_pixel(0, 0), &Rgb([255, 255, 255]));
         assert_eq!(img.get_pixel(1, 0), &Rgb([0, 0, 0]));
         assert_eq!(img.get_pixel(2, 0), &Rgb([0, 0, 0]));
+    }
+
+    // Parity: darken_and_binarize uses BT.601 luma for white detection, matching canvas.
+    // Canvas darkenNonWhite: cvtColorToGray (BT.601) then threshold at 240.
+    #[test]
+    fn parity_darken_and_binarize_bt601_threshold() {
+        let mut img = RgbImage::new(2, 1);
+        // (250, 245, 215): BT.601 luma = 243 > 240 → white path (keep + quantize to 255)
+        // simple avg: 236 ≤ 240 → old code wrongly sent this to the black path
+        img.put_pixel(0, 0, Rgb([250, 245, 215]));
+        // (240, 240, 240): BT.601 = 240 ≤ 240 → non-white → black
+        img.put_pixel(1, 0, Rgb([240, 240, 240]));
+        darken_and_binarize(&mut img);
+        assert_eq!(
+            img.get_pixel(0, 0),
+            &Rgb([255, 255, 255]),
+            "BT.601>240 non-gray near-white must stay white"
+        );
+        assert_eq!(
+            img.get_pixel(1, 0),
+            &Rgb([0, 0, 0]),
+            "BT.601=240 must darken to black"
+        );
+    }
+
+    // Parity: rgb_to_hsv red — H=0 in OpenCV 0-180 convention
+    #[test]
+    fn parity_rgb_to_hsv_red() {
+        let (h, s, v) = rgb_to_hsv(255, 0, 0);
+        assert_eq!(h, 0, "pure red H must be 0");
+        assert_eq!(s, 255);
+        assert_eq!(v, 255);
+    }
+
+    // Parity: rgb_to_hsv green — H=60 in OpenCV 0-180 convention (120° / 2)
+    #[test]
+    fn parity_rgb_to_hsv_green() {
+        let (h, s, v) = rgb_to_hsv(0, 255, 0);
+        assert_eq!(h, 60, "pure green H must be 60 in OpenCV convention");
+        assert_eq!(s, 255);
+        assert_eq!(v, 255);
+    }
+
+    // Parity: gray pixels must have S=0 regardless of brightness
+    #[test]
+    fn parity_rgb_to_hsv_gray_saturation_zero() {
+        let (_, s, _) = rgb_to_hsv(128, 128, 128);
+        assert_eq!(s, 0, "gray pixel must have S=0");
+        let (_, s2, _) = rgb_to_hsv(0, 0, 0);
+        assert_eq!(s2, 0, "black must have S=0");
+    }
+
+    // Parity: is_close uses L1 ≤ thresh*3 (inclusive boundary).
+    // Canvas: Math.abs(r1-r2)+Math.abs(g1-g2)+Math.abs(b1-b2) <= thresh*3
+    #[test]
+    fn parity_is_close_boundary() {
+        // L1 = 5+5+5 = 15 = thresh*3 → true (inclusive)
+        assert!(
+            is_close(&[0, 0, 0], &[5, 5, 5], 5),
+            "L1==thresh*3 must be close"
+        );
+        // L1 = 5+5+6 = 16 > 15 → false
+        assert!(
+            !is_close(&[0, 0, 0], &[5, 5, 6], 5),
+            "L1==thresh*3+1 must not be close"
+        );
+    }
+
+    // Parity: get_pixel arg=1 returns most common; arg=-2 returns second most common.
+    // Canvas uses numpy unique (equivalent behavior for binarized images).
+    #[test]
+    fn parity_get_pixel_arg1_and_neg2() {
+        let mut img = RgbImage::new(4, 1);
+        img.put_pixel(0, 0, Rgb([255, 255, 255]));
+        img.put_pixel(1, 0, Rgb([255, 255, 255]));
+        img.put_pixel(2, 0, Rgb([255, 255, 255]));
+        img.put_pixel(3, 0, Rgb([0, 0, 0]));
+        assert_eq!(
+            get_pixel(&img, 1),
+            Some([255, 255, 255]),
+            "arg=1 must return most common"
+        );
+        assert_eq!(
+            get_pixel(&img, -2),
+            Some([0, 0, 0]),
+            "arg=-2 must return 2nd most common"
+        );
+    }
+
+    // Parity: remove_all_but uses squared L2 distance, boundary dist_sq==threshold^2 → matches.
+    // Canvas: dr*dr+dg*dg+db*db <= threshold*threshold
+    #[test]
+    fn parity_remove_all_but_boundary() {
+        // threshold=30, threshold_sq=900
+        // pixel [255, 151, 0] vs target [255, 121, 0]: dg=30, dist_sq=900 ≤ 900 → black
+        // pixel [255, 152, 0] vs target [255, 121, 0]: dg=31, dist_sq=961 > 900 → white
+        let mut img = RgbImage::new(2, 1);
+        img.put_pixel(0, 0, Rgb([255, 151, 0]));
+        img.put_pixel(1, 0, Rgb([255, 152, 0]));
+        remove_all_but(&mut img, [255, 121, 0], 30);
+        assert_eq!(
+            img.get_pixel(0, 0),
+            &Rgb([0, 0, 0]),
+            "exact threshold dist must match → black"
+        );
+        assert_eq!(
+            img.get_pixel(1, 0),
+            &Rgb([255, 255, 255]),
+            "dist>threshold must not match → white"
+        );
+    }
+
+    // Parity: adjust_contrast_brightness clamps output at 0.
+    // Canvas: Math.max(0, Math.min(255, v * contrast + adjusted))
+    #[test]
+    fn parity_adjust_contrast_brightness_clamps_at_zero() {
+        let mut img = RgbImage::new(1, 1);
+        img.put_pixel(0, 0, Rgb([0, 0, 0]));
+        // contrast=1.0, brightness=-50: adjusted=-50+(255*(1-1)/2).round()=-50; val=0-50 → clamp=0
+        let result = adjust_contrast_brightness(&img, 1.0, -50);
+        assert_eq!(
+            result.get_pixel(0, 0)[0],
+            0,
+            "output must clamp at 0, not go negative"
+        );
+    }
+
+    // Parity: convert_dark_mode fused LUT maps black→255 and white→0.
+    // Canvas: invert then contrast=3.0, brightness=10 → adjusted=-245.
+    // LUT[0]  = clamp((255-0)*3+(-245)) = clamp(520) = 255
+    // LUT[255] = clamp((255-255)*3+(-245)) = clamp(-245) = 0
+    #[test]
+    fn parity_convert_dark_mode_extreme_lut_values() {
+        // Build a dark image (mean < 100) with two extreme pixels
+        let mut img = RgbImage::from_fn(10, 10, |x, _| {
+            if x == 9 {
+                Rgb([0, 0, 0])
+            } else {
+                Rgb([10, 10, 10])
+            }
+        });
+        // Add one near-white pixel in dark image to test white→0 mapping
+        img.put_pixel(9, 9, Rgb([255, 255, 255]));
+        convert_dark_mode(&mut img);
+        assert_eq!(
+            img.get_pixel(9, 0)[0],
+            255,
+            "pure black in dark image → white after conversion"
+        );
+        assert_eq!(
+            img.get_pixel(9, 9)[0],
+            0,
+            "pure white in dark image → black after conversion"
+        );
+    }
+
+    // Parity: extract_line horizontal uses count > sw/2 threshold (strictly greater).
+    // Canvas: if (count / width > 0.5) — equivalently count > width/2.
+    #[test]
+    fn parity_extract_line_horizontal_threshold() {
+        // 10×10 white image, row 3 is fully black.
+        // After reduce_color_count(2): black(0,0,0)=10px, white=90px → 2nd most common=black.
+        // Row 3: 10 black pixels; count=10 > sw/2=5 → detected at y=3.
+        let mut img = RgbImage::from_fn(10, 10, |_, _| image::Rgb([255, 255, 255]));
+        for x in 0..10 {
+            img.put_pixel(x, 3, image::Rgb([0, 0, 0]));
+        }
+        let y = extract_line(&img, 0, 10, 0, 10, true);
+        assert_eq!(y, 3, "horizontal line at row 3 must be detected");
+    }
+
+    // Parity: extract_line vertical uses count > sh/4 threshold (strictly greater).
+    // Canvas: if (count / height > 0.25) — equivalently count > height/4.
+    #[test]
+    fn parity_extract_line_vertical_threshold() {
+        // 10×10 white image, column 5 has 3 black pixels (3/10=30% > 25%).
+        // After reduce_color_count(2): black=3px, white=97px → 2nd most common=black.
+        // Column 5: count=3 > sh/4=2 → detected at x=5.
+        let mut img = RgbImage::from_fn(10, 10, |_, _| image::Rgb([255, 255, 255]));
+        img.put_pixel(5, 0, image::Rgb([0, 0, 0]));
+        img.put_pixel(5, 1, image::Rgb([0, 0, 0]));
+        img.put_pixel(5, 2, image::Rgb([0, 0, 0]));
+        let x = extract_line(&img, 0, 10, 0, 10, false);
+        assert_eq!(x, 5, "vertical line at col 5 must be detected");
     }
 }

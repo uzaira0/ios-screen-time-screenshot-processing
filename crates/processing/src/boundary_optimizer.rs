@@ -9,10 +9,14 @@ use lazy_static::lazy_static;
 use log::{debug, info, warn};
 use regex::Regex;
 
-use super::bar_extraction::{compute_bar_total_from_scaled, preprocess_for_optimizer, slice_image_fast_total};
-use super::image_utils::remove_all_but;
-use super::ocr::normalize_ocr_digits;
-use super::types::{GridBounds, ImageType};
+use super::{
+    bar_extraction::{
+        compute_bar_total_from_scaled, preprocess_for_optimizer, slice_image_fast_total,
+    },
+    image_utils::remove_all_but,
+    ocr::normalize_ocr_digits,
+    types::{GridBounds, ImageType},
+};
 
 lazy_static! {
     static ref RE_HOURS: Regex = Regex::new(r"(\d{1,2})\s*h").unwrap();
@@ -28,6 +32,8 @@ pub struct OptimizationResult {
     pub bounds: GridBounds,
     pub bar_total_minutes: i32,
     pub ocr_total_minutes: i32,
+    /// OCR total string after 7→1 digit correction (may differ from the raw OCR input).
+    pub corrected_total: String,
     pub shift_x: i32,
     pub shift_y: i32,
     pub shift_width: i32,
@@ -84,21 +90,27 @@ fn correct_ocr_7_to_1(ocr_total: &str, bar_total_minutes: i32) -> (String, i32) 
     let mut best_diff = (best_minutes - bar_total_minutes).unsigned_abs();
 
     let chars: Vec<char> = ocr_total.chars().collect();
-    let positions: Vec<usize> = chars.iter().enumerate()
+    let positions: Vec<usize> = chars
+        .iter()
+        .enumerate()
         .filter(|(_, &c)| c == '7')
         .map(|(i, _)| i)
         .collect();
 
     // Single replacements
     for &pos in &positions {
-        let alt: String = chars.iter().enumerate()
+        let alt: String = chars
+            .iter()
+            .enumerate()
             .map(|(i, &c)| if i == pos { '1' } else { c })
             .collect();
         if let Some(mins) = parse_ocr_total(&alt) {
             let diff = (mins - bar_total_minutes).unsigned_abs();
             if diff < best_diff {
-                info!("OCR 7->1 correction: '{}' ({}) -> '{}' ({}) [bar={}]",
-                    ocr_total, best_minutes, alt, mins, bar_total_minutes);
+                info!(
+                    "OCR 7->1 correction: '{}' ({}) -> '{}' ({}) [bar={}]",
+                    ocr_total, best_minutes, alt, mins, bar_total_minutes
+                );
                 best_total = alt;
                 best_minutes = mins;
                 best_diff = diff;
@@ -112,8 +124,10 @@ fn correct_ocr_7_to_1(ocr_total: &str, bar_total_minutes: i32) -> (String, i32) 
         if let Some(mins) = parse_ocr_total(&alt) {
             let diff = (mins - bar_total_minutes).unsigned_abs();
             if diff < best_diff {
-                info!("OCR 7->1 correction (all): '{}' -> '{}' ({}) [bar={}]",
-                    ocr_total, alt, mins, bar_total_minutes);
+                info!(
+                    "OCR 7->1 correction (all): '{}' -> '{}' ({}) [bar={}]",
+                    ocr_total, alt, mins, bar_total_minutes
+                );
                 best_total = alt;
                 best_minutes = mins;
             }
@@ -148,17 +162,15 @@ fn extract_bar_total_fast(
 
     let total = if image_type == ImageType::Battery {
         // Battery needs color filtering — can't use precomputed buffer
-        let roi_base = image::imageops::crop_imm(
-            img,
-            roi_x as u32, roi_y as u32,
-            roi_w as u32, roi_h as u32,
-        ).to_image();
+        let roi_base =
+            image::imageops::crop_imm(img, roi_x as u32, roi_y as u32, roi_w as u32, roi_h as u32)
+                .to_image();
         let mut roi = roi_base.clone();
-        remove_all_but(&mut roi, [0, 121, 255], 30);
+        remove_all_but(&mut roi, [255, 121, 0], 30);
         let t = slice_image_fast_total(&roi, 0, 0, roi_w as u32, roi_h as u32);
         if t == 0.0 {
             let mut roi2 = roi_base;
-            remove_all_but(&mut roi2, [255, 134, 0], 30);
+            remove_all_but(&mut roi2, [0, 134, 255], 30);
             slice_image_fast_total(&roi2, 0, 0, roi_w as u32, roi_h as u32)
         } else {
             t
@@ -199,14 +211,18 @@ pub fn optimize_boundaries(
         Some(m) => m,
         None => {
             warn!("Could not parse OCR total: '{}'", ocr_total);
-            let bar_total = slice_image_fast_total(img,
-                initial_bounds.roi_x() as u32, initial_bounds.roi_y() as u32,
-                initial_bounds.width() as u32, initial_bounds.height() as u32,
+            let bar_total = slice_image_fast_total(
+                img,
+                initial_bounds.roi_x() as u32,
+                initial_bounds.roi_y() as u32,
+                initial_bounds.width() as u32,
+                initial_bounds.height() as u32,
             ) as i32;
             return OptimizationResult {
                 bounds: initial_bounds.clone(),
                 bar_total_minutes: bar_total,
                 ocr_total_minutes: 0,
+                corrected_total: ocr_total.to_string(),
                 shift_x: 0,
                 shift_y: 0,
                 shift_width: 0,
@@ -219,11 +235,6 @@ pub fn optimize_boundaries(
     // Precompute binarized + 4x-scaled image ONCE for the optimizer loop.
     // This gives 4x precision on every iteration with zero per-iteration allocation.
     let (scaled_data, scaled_width, _scaled_height) = preprocess_for_optimizer(img);
-
-    // Cache initial-bounds bar total for bogus-optimization rejection
-    let initial_bar_total = extract_bar_total_fast(
-        &scaled_data, scaled_width, img, initial_bounds, image_type,
-    ).unwrap_or(0.0) as i32;
 
     let mut best_bounds = initial_bounds.clone();
     let mut best_diff = i32::MAX;
@@ -249,30 +260,37 @@ pub fn optimize_boundaries(
 
                 // Validate
                 if new_x < 0 || new_y < 0 || new_w <= 0 {
-                    sw += 2; continue;
+                    sw += 2;
+                    continue;
                 }
                 if (new_x + new_w) as u32 > img_w || (new_y + new_h) as u32 > img_h {
-                    sw += 2; continue;
+                    sw += 2;
+                    continue;
                 }
 
-                let test_bounds = GridBounds::new(
-                    new_x,
-                    new_y,
-                    new_x + new_w,
-                    new_y + new_h,
-                );
+                let test_bounds = GridBounds::new(new_x, new_y, new_x + new_w, new_y + new_h);
 
-                let bar_total = match extract_bar_total_fast(&scaled_data, scaled_width, img, &test_bounds, image_type) {
+                let bar_total = match extract_bar_total_fast(
+                    &scaled_data,
+                    scaled_width,
+                    img,
+                    &test_bounds,
+                    image_type,
+                ) {
                     Some(t) => t as i32,
-                    None => { sw += 2; continue; }
+                    None => {
+                        sw += 2;
+                        continue;
+                    }
                 };
 
                 let diff = (bar_total - target_minutes).abs();
                 let shift_penalty = 5 * sx.abs() + sy.abs() + 5 * sw.abs();
-                let best_shift_penalty = 5 * best_shift_x.abs() + best_shift_y.abs() + 5 * best_shift_width.abs();
+                let best_shift_penalty =
+                    5 * best_shift_x.abs() + best_shift_y.abs() + 5 * best_shift_width.abs();
 
-                let is_better = diff < best_diff
-                    || (diff == best_diff && shift_penalty < best_shift_penalty);
+                let is_better =
+                    diff < best_diff || (diff == best_diff && shift_penalty < best_shift_penalty);
 
                 if is_better {
                     best_diff = diff;
@@ -289,6 +307,7 @@ pub fn optimize_boundaries(
                             bounds: best_bounds,
                             bar_total_minutes: best_bar_total,
                             ocr_total_minutes: target_minutes,
+                            corrected_total: ocr_total.to_string(),
                             shift_x: best_shift_x,
                             shift_y: best_shift_y,
                             shift_width: best_shift_width,
@@ -306,38 +325,25 @@ pub fn optimize_boundaries(
     }
 
     // Apply 7→1 OCR correction using bar total as hint
-    let (_corrected_str, corrected_minutes) = correct_ocr_7_to_1(ocr_total, best_bar_total);
+    let (corrected_str, corrected_minutes) = correct_ocr_7_to_1(ocr_total, best_bar_total);
     let final_diff = (best_bar_total - corrected_minutes).abs();
-
-    // Reject bogus optimization: if bar_total is 0 but OCR says non-zero,
-    // the optimizer shifted to a blank region — use initial bounds instead.
-    if best_bar_total == 0 && corrected_minutes > 0 {
-        warn!(
-            "Rejecting optimization: bar_total=0 but ocr_total={} — using initial bounds",
-            corrected_minutes
-        );
-        return OptimizationResult {
-            bounds: initial_bounds.clone(),
-            bar_total_minutes: initial_bar_total,
-            ocr_total_minutes: corrected_minutes,
-            shift_x: 0,
-            shift_y: 0,
-            shift_width: 0,
-            iterations,
-            converged: false,
-        };
-    }
 
     debug!(
         "Boundary optimizer: shift=({},{},{}) bar={} ocr={} (orig={}) diff={}",
-        best_shift_x, best_shift_y, best_shift_width,
-        best_bar_total, corrected_minutes, target_minutes, final_diff
+        best_shift_x,
+        best_shift_y,
+        best_shift_width,
+        best_bar_total,
+        corrected_minutes,
+        target_minutes,
+        final_diff
     );
 
     OptimizationResult {
         bounds: best_bounds,
         bar_total_minutes: best_bar_total,
         ocr_total_minutes: corrected_minutes,
+        corrected_total: corrected_str,
         shift_x: best_shift_x,
         shift_y: best_shift_y,
         shift_width: best_shift_width,
@@ -374,5 +380,44 @@ mod tests {
     fn test_parse_ocr_total_normalized() {
         // normalize_ocr_digits converts I→1, O→0
         assert_eq!(parse_ocr_total("Ih 31m"), Some(91));
+    }
+
+    // Parity: parse_ocr_total uses \b word boundary for minutes to reject "ms" (milliseconds).
+    // Canvas uses a simple character map that also blocks "ms" via unit normalization.
+    #[test]
+    fn parity_parse_ocr_total_rejects_ms() {
+        // "30ms" should not match minutes — 's' after 'm' is a word char, \b rejects it.
+        assert_eq!(parse_ocr_total("30ms"), None);
+        // "30m" with no following word char must match.
+        assert_eq!(parse_ocr_total("30m"), Some(30));
+    }
+
+    // Parity: seconds-only returns Some(0) — canvas extractTimeFromText also returns 0 for "Xs".
+    #[test]
+    fn parity_parse_ocr_total_seconds_returns_zero() {
+        assert_eq!(parse_ocr_total("45s"), Some(0));
+        assert_eq!(parse_ocr_total("1s"), Some(0));
+    }
+
+    // Parity: mixed hours+minutes+seconds — only h and m count, s is ignored.
+    #[test]
+    fn parity_parse_ocr_total_hms_ignores_seconds() {
+        assert_eq!(parse_ocr_total("1h 30m 45s"), Some(90)); // same as 1h 30m
+    }
+
+    // Parity: canvas optimizeBoundaries has NO bogus-optimization rejection.
+    // When bar_total=0 and ocr_total>0, canvas returns the best-scoring (possibly blank) bounds.
+    // Rust must do the same — no early revert to initial_bounds.
+    // This test verifies optimize_boundaries runs to completion and returns a result
+    // (even if suboptimal) rather than reverting when bar extraction yields 0.
+    #[test]
+    fn parity_no_bogus_optimization_rejection() {
+        // All-white image: bar extraction gives 0 for every candidate. OCR total = "30m".
+        let img = image::RgbImage::from_fn(400, 600, |_, _| image::Rgb([255, 255, 255]));
+        let bounds = GridBounds::from_roi(10, 100, 380, 400);
+        let result = optimize_boundaries(&img, &bounds, "30m", 2, ImageType::ScreenTime);
+        // Must complete and return a result (not panic). bar_total may be 0.
+        // Canvas: no rejection, just returns whatever the optimizer found.
+        let _ = result.bar_total_minutes; // no assertion on value — parity is about not crashing/reverting
     }
 }

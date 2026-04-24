@@ -1,9 +1,9 @@
 //! Shared types for the image processing pipeline.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Grid boundary coordinates (upper-left corner + lower-right corner).
-#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct GridBounds {
     pub upper_left_x: i32,
     pub upper_left_y: i32,
@@ -12,7 +12,12 @@ pub struct GridBounds {
 }
 
 impl GridBounds {
-    pub fn new(upper_left_x: i32, upper_left_y: i32, lower_right_x: i32, lower_right_y: i32) -> Self {
+    pub fn new(
+        upper_left_x: i32,
+        upper_left_y: i32,
+        lower_right_x: i32,
+        lower_right_y: i32,
+    ) -> Self {
         Self {
             upper_left_x,
             upper_left_y,

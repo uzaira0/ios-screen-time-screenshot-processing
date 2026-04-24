@@ -3,6 +3,7 @@
 //! Port of Python ocr.py — regex patterns for digit normalization,
 //! time extraction, and daily total page detection.
 
+#[cfg(feature = "ocr")]
 use std::cell::RefCell;
 
 use lazy_static::lazy_static;
@@ -13,11 +14,13 @@ use regex::Regex;
 // on every call (saves ~200ms per image).
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "ocr")]
 thread_local! {
     static LEPTESS: RefCell<Option<leptess::LepTess>> = RefCell::new(None);
 }
 
 /// Get or initialise the thread-local LepTess instance.
+#[cfg(feature = "ocr")]
 fn with_leptess<F, T>(psm: &str, f: F) -> Result<T, crate::types::ProcessingError>
 where
     F: FnOnce(&mut leptess::LepTess) -> Result<T, crate::types::ProcessingError>,
@@ -25,14 +28,21 @@ where
     LEPTESS.with(|cell| {
         let mut opt = cell.borrow_mut();
         if opt.is_none() {
-            let lt = leptess::LepTess::new(None, "eng")
-                .map_err(|e| crate::types::ProcessingError::Ocr(format!("Tesseract init failed: {e}")))?;
+            let lt = leptess::LepTess::new(None, "eng").map_err(|e| {
+                crate::types::ProcessingError::Ocr(format!("Tesseract init failed: {e}"))
+            })?;
             *opt = Some(lt);
         }
         let lt = opt.as_mut().unwrap();
         // PSM may differ per call — set it every time (cheap)
-        if lt.set_variable(leptess::Variable::TesseditPagesegMode, psm).is_err() {
-            log::warn!("Failed to set Tesseract PSM to '{}', using previous setting", psm);
+        if lt
+            .set_variable(leptess::Variable::TesseditPagesegMode, psm)
+            .is_err()
+        {
+            log::warn!(
+                "Failed to set Tesseract PSM to '{}', using previous setting",
+                psm
+            );
         }
         f(lt)
     })
@@ -109,7 +119,9 @@ pub fn normalize_ocr_digits(text: &str) -> String {
     result = RE_0_BEFORE_UNIT.replace_all(&result, "0$2").to_string();
     result = RE_0_AFTER_DIGIT.replace_all(&result, "${1}0$3").to_string();
     result = RE_0_BEFORE_DIGIT.replace_all(&result, "0$2").to_string();
-    result = RE_0_BETWEEN_DIGITS.replace_all(&result, "${1}0$3").to_string();
+    result = RE_0_BETWEEN_DIGITS
+        .replace_all(&result, "${1}0$3")
+        .to_string();
 
     // 4-like: A
     result = RE_4_BEFORE_UNIT.replace_all(&result, "4$2").to_string();
@@ -230,6 +242,8 @@ const APP_PAGE_MARKERS: &[&str] = &[
     "RATING",
     "LIMIT",
     "AGE",
+    "DAILY",
+    "AVERAGE",
 ];
 
 /// Determine if OCR text indicates a daily total page (vs app-specific).
@@ -265,8 +279,9 @@ pub fn is_daily_total_page(texts: &[String]) -> bool {
 // ---------------------------------------------------------------------------
 
 use image::RgbImage;
-use log::{info, debug};
+use log::{debug, info};
 
+#[cfg(feature = "ocr")]
 use crate::image_utils::adjust_contrast_brightness;
 use crate::types::ProcessingError;
 
@@ -283,6 +298,7 @@ pub struct OcrWord {
 /// Run Tesseract on an image and return word-level results.
 ///
 /// Uses `set_image_from_mem` to avoid temp file I/O entirely.
+#[cfg(feature = "ocr")]
 pub fn run_tesseract(img: &RgbImage, psm: &str) -> Result<Vec<OcrWord>, ProcessingError> {
     // Encode image to PNG in memory
     let mut png_buf = Vec::new();
@@ -291,6 +307,11 @@ pub fn run_tesseract(img: &RgbImage, psm: &str) -> Result<Vec<OcrWord>, Processi
         .map_err(|e| ProcessingError::Ocr(format!("PNG encode failed: {e}")))?;
 
     with_leptess(psm, |lt| {
+        lt.set_variable(
+            leptess::Variable::TesseditCharWhitelist,
+            "0123456789hmHM: ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+        )
+        .ok();
         lt.set_image_from_mem(&png_buf)
             .map_err(|e| ProcessingError::Ocr(format!("Set image from mem failed: {e}")))?;
         lt.recognize();
@@ -299,6 +320,7 @@ pub fn run_tesseract(img: &RgbImage, psm: &str) -> Result<Vec<OcrWord>, Processi
 }
 
 /// Parse TSV output from a recognized LepTess instance into word-level boxes.
+#[cfg(feature = "ocr")]
 pub fn parse_tsv_words(lt: &mut leptess::LepTess) -> Result<Vec<OcrWord>, ProcessingError> {
     let tsv = lt.get_tsv_text(0).unwrap_or_default();
     let mut words = Vec::new();
@@ -362,7 +384,9 @@ fn words_to_title_text<'a>(words: impl Iterator<Item = &'a OcrWord>) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
-    raw.trim().trim_matches(|c| c == '#' || c == '_' || c == ' ').to_string()
+    raw.trim()
+        .trim_matches(|c| c == '#' || c == '_' || c == ' ')
+        .to_string()
 }
 
 /// Extract the screenshot title using pre-computed full-image OCR data.
@@ -387,79 +411,95 @@ fn extract_title(
         let (img_w, _img_h) = img.dimensions();
         let title_y_start = info.y + info.h;
         let title_x_start = (info.x as f64 + 1.5 * info.w as f64) as i32;
-        // Limit width to 65% of image width to avoid picking up right-side UI text
-        let title_x_end = (title_x_start + info.w * 10).min((img_w as f64 * 0.65) as i32);
+        // Match canvas: xWidth = xOrigin + infoWidth * 12, limited to image boundary
+        let title_x_end = (title_x_start + info.w * 12).min(img_w as i32);
         // Limit height to 4x INFO height to avoid picking up text below the title
         let title_y_end = title_y_start + info.h * 4;
 
-        // Fast path: extract title from full-image OCR words by spatial position.
-        // Words that fall inside the title bounding box are already in ocr_data —
-        // no extra Tesseract call needed.
-        let mut title_words: Vec<&OcrWord> = ocr_data
-            .iter()
-            .filter(|w| {
-                !w.text.is_empty()
-                    && w.x >= title_x_start
-                    && w.x < title_x_end
-                    && w.y >= title_y_start
-                    && w.y < title_y_end
-                    // Exclude the "INFO" word itself (shouldn't overlap, but be safe)
-                    && !w.text.contains("INFO")
-            })
-            .collect();
-        sort_words_reading_order(&mut title_words);
-
-        let title = words_to_title_text(title_words.iter().copied());
-
-        if !title.is_empty() && title.len() <= 50 {
-            info!("Found title from full-image OCR: '{}' at y={}", title, title_y_end);
-            return Ok((title, Some(title_y_end)));
+        // Canvas always crops the title region + applies 2× contrast + re-OCRs.
+        // No spatial fast path — canvas never reuses full-image OCR words for title.
+        // Under no-ocr (WASM JS path): fall back to spatial word filtering since
+        // JS handles re-OCR externally via findScreenshotTitle().
+        #[cfg(not(feature = "ocr"))]
+        {
+            let mut title_words: Vec<&OcrWord> = ocr_data
+                .iter()
+                .filter(|w| {
+                    !w.text.is_empty()
+                        && w.x >= title_x_start
+                        && w.x < title_x_end
+                        && w.y >= title_y_start
+                        && w.y < title_y_end
+                        && !w.text.contains("INFO")
+                })
+                .collect();
+            sort_words_reading_order(&mut title_words);
+            let title = words_to_title_text(title_words.iter().copied());
+            if !title.is_empty() && title.len() <= 50 {
+                return Ok((title, Some(title_y_end)));
+            }
         }
 
-        // Slow fallback: crop region + contrast enhancement + re-OCR.
-        let (img_w, img_h) = img.dimensions();
-        let x_origin = title_x_start.max(0) as u32;
-        let x_end = (title_x_end as u32).min(img_w);
-        let y_start = title_y_start.max(0) as u32;
-        let y_end = (title_y_end as u32).min(img_h);
+        #[cfg(feature = "ocr")]
+        {
+            let (img_w, img_h) = img.dimensions();
+            let x_origin = title_x_start.max(0) as u32;
+            let x_end = (title_x_end as u32).min(img_w);
+            let y_start = title_y_start.max(0) as u32;
+            let y_end = (title_y_end as u32).min(img_h);
 
-        if x_end > x_origin && y_end > y_start {
-            let region = image::imageops::crop_imm(img, x_origin, y_start, x_end - x_origin, y_end - y_start).to_image();
-            let region_enhanced = adjust_contrast_brightness(&region, 2.0, 0);
-            let words = run_tesseract(&region_enhanced, "3")?;
+            if x_end > x_origin && y_end > y_start {
+                let region = image::imageops::crop_imm(
+                    img,
+                    x_origin,
+                    y_start,
+                    x_end - x_origin,
+                    y_end - y_start,
+                )
+                .to_image();
+                let region_enhanced = adjust_contrast_brightness(&region, 2.0, 0);
+                let words = run_tesseract(&region_enhanced, "6")?;
 
-            let title = words_to_title_text(words.iter());
+                let title = words_to_title_text(words.iter());
 
-            if title.len() > 50 {
-                info!("Title too long ({} chars), likely OCR garbage", title.len());
-                return Ok((String::new(), Some(y_end as i32)));
+                if title.len() > 50 {
+                    info!("Title too long ({} chars), likely OCR garbage", title.len());
+                    return Ok((String::new(), Some(y_end as i32)));
+                }
+
+                info!("Found title via crop OCR: '{}' at y={}", title, y_end);
+                return Ok((title, Some(y_end as i32)));
             }
-
-            info!("Found title via crop OCR: '{}' at y={}", title, y_end);
-            return Ok((title, Some(y_end as i32)));
         }
     }
 
-    // Fallback: no "INFO" found — use constrained region
-    let (img_w, img_h) = img.dimensions();
-    let fb_y_start = 40u32.min(img_h);
-    let fb_y_end = 200u32.min(img_h);  // Tighter vertical range
-    let fb_x_start = 120u32.min(img_w);
-    // Limit to 55% of image width to exclude right-side navigation text
-    let fb_x_end = ((img_w as f64 * 0.55) as u32).min(img_w);
+    // Fallback: no "INFO" found — use constrained region (native re-OCR only).
+    #[cfg(feature = "ocr")]
+    {
+        let (img_w, img_h) = img.dimensions();
+        let fb_y_start = 40u32.min(img_h);
+        let fb_y_end = 200u32.min(img_h); // Tighter vertical range
+        let fb_x_start = 120u32.min(img_w);
+        // Limit to 55% of image width to exclude right-side navigation text
+        let fb_x_end = ((img_w as f64 * 0.55) as u32).min(img_w);
 
-    if fb_x_end > fb_x_start && fb_y_end > fb_y_start {
-        let region = image::imageops::crop_imm(
-            img, fb_x_start, fb_y_start,
-            fb_x_end - fb_x_start, fb_y_end - fb_y_start,
-        ).to_image();
-        let region_enhanced = adjust_contrast_brightness(&region, 2.0, 0);
-        let words = run_tesseract(&region_enhanced, "3")?;
+        if fb_x_end > fb_x_start && fb_y_end > fb_y_start {
+            let region = image::imageops::crop_imm(
+                img,
+                fb_x_start,
+                fb_y_start,
+                fb_x_end - fb_x_start,
+                fb_y_end - fb_y_start,
+            )
+            .to_image();
+            let region_enhanced = adjust_contrast_brightness(&region, 2.0, 0);
+            let words = run_tesseract(&region_enhanced, "6")?;
 
-        let title = words_to_title_text(words.iter());
-        if !title.is_empty() && title.len() <= 50 {
-            info!("Found title via fallback region: '{}'", title);
-            return Ok((title, Some(fb_y_end as i32)));
+            let title = words_to_title_text(words.iter());
+            if !title.is_empty() && title.len() <= 50 {
+                info!("Found title via fallback region: '{}'", title);
+                return Ok((title, Some(fb_y_end as i32)));
+            }
         }
     }
 
@@ -470,10 +510,7 @@ fn extract_title(
 /// Extract total screen time using pre-computed full-image OCR data.
 ///
 /// Extracts from spatially-filtered full-image OCR words — no extra Tesseract call.
-fn extract_total(
-    img: &RgbImage,
-    ocr_data: &[OcrWord],
-) -> Result<String, ProcessingError> {
+fn extract_total(img: &RgbImage, ocr_data: &[OcrWord]) -> Result<String, ProcessingError> {
     let texts: Vec<String> = ocr_data.iter().map(|w| w.text.clone()).collect();
     let is_daily = is_daily_total_page(&texts);
 
@@ -516,7 +553,10 @@ fn extract_total(
         let total_text = words_to_normalized_text(region_words.iter().copied());
         let extracted = extract_time_from_text(&total_text);
         if !extracted.is_empty() {
-            info!("Found total from full-image OCR: '{}' (from '{}')", extracted, total_text);
+            info!(
+                "Found total from full-image OCR: '{}' (from '{}')",
+                extracted, total_text
+            );
             return Ok(extracted);
         }
     }
@@ -527,10 +567,7 @@ fn extract_total(
     let mut region_words: Vec<&OcrWord> = ocr_data
         .iter()
         .filter(|w| {
-            !w.text.is_empty()
-                && w.y >= fb_y_start
-                && w.y < fb_y_end
-                && w.x < (img_w as i32 / 3)
+            !w.text.is_empty() && w.y >= fb_y_start && w.y < fb_y_end && w.x < (img_w as i32 / 3)
         })
         .collect();
     sort_words_reading_order(&mut region_words);
@@ -538,25 +575,33 @@ fn extract_total(
     let fb_text = words_to_normalized_text(region_words.iter().copied());
     let extracted = extract_time_from_text(&fb_text);
     if !extracted.is_empty() {
-        info!("Found total via hardcoded region fallback: '{}' (from '{}')", extracted, fb_text);
+        info!(
+            "Found total via hardcoded region fallback: '{}' (from '{}')",
+            extracted, fb_text
+        );
         return Ok(extracted);
     }
 
-    // Progressive search: left 1/2 → full width, limited to just below
-    // "SCREEN TIME" header. The total text is always between y~250 and y~400.
+    // Progressive search: left 1/3 → left 1/2 → full width.
+    // Canvas uses 3 tiers: left-third (avoids "Daily Average"), left-half, full image.
     // "Daily Average" at y~674 must be excluded. Use SCREEN word position
     // if available, otherwise cap at img_h/4.
     let y_limit = screen_word
         .map(|sw| sw.y + sw.h + 200) // ~200px below SCREEN word
         .unwrap_or((img_h as i32) / 4);
-    for fraction in &[2, 1] {
+    for fraction in &[3, 2, 1] {
         let x_limit = img_w as i32 / fraction;
         let prog_text = words_to_normalized_text(
-            ocr_data.iter().filter(|w| !w.text.is_empty() && w.x < x_limit && w.y < y_limit)
+            ocr_data
+                .iter()
+                .filter(|w| !w.text.is_empty() && w.x < x_limit && w.y < y_limit),
         );
         let total = extract_time_from_text(&prog_text);
         if !total.is_empty() {
-            info!("Found total via progressive search (1/{}): '{}'", fraction, total);
+            info!(
+                "Found total via progressive search (1/{}): '{}'",
+                fraction, total
+            );
             return Ok(total);
         }
     }
@@ -573,11 +618,12 @@ fn extract_total(
 /// in the lower half of daily total pages) to be missed.
 ///
 /// Errors are propagated, not silently swallowed.
+#[cfg(feature = "ocr")]
 pub fn find_title_and_total(
     img: &RgbImage,
 ) -> Result<(String, Option<i32>, String), ProcessingError> {
     // Run Tesseract ONCE on the full image
-    let ocr_data = run_tesseract(img, "3")?;
+    let ocr_data = run_tesseract(img, "6")?;
 
     // Extract title and total using the cached OCR data.
     // Pass the full image for the title crop fallback (needs full-res pixels).
@@ -585,6 +631,29 @@ pub fn find_title_and_total(
     let total = extract_total(img, &ocr_data)?;
 
     Ok((title, title_y, total))
+}
+
+/// Extract title and total from an externally-provided word list (e.g. Tesseract.js).
+///
+/// Used by the WASM module: the caller provides words from the JS OCR engine,
+/// and this function applies Rust's spatial filtering and text normalization.
+/// `img_width` and `img_height` must match the source image for correct spatial math.
+pub fn extract_from_words(
+    words: &[OcrWord],
+    img_width: u32,
+    img_height: u32,
+) -> (String, Option<i32>, String) {
+    let stub = image::RgbImage::new(img_width, img_height);
+    let texts: Vec<String> = words.iter().map(|w| w.text.clone()).collect();
+    let is_daily = is_daily_total_page(&texts);
+    let (raw_title, title_y) = extract_title(&stub, words).unwrap_or((String::new(), None));
+    let title = if is_daily {
+        "Daily Total".to_string()
+    } else {
+        raw_title
+    };
+    let total = extract_total(&stub, words).unwrap_or(String::new());
+    (title, title_y, total)
 }
 
 #[cfg(test)]
@@ -632,7 +701,10 @@ mod tests {
     fn test_extract_hour_min() {
         assert_eq!(extract_time_from_text("4h 36m"), "4h 36m");
         assert_eq!(extract_time_from_text("12h 5m"), "12h 5m");
-        assert_eq!(extract_time_from_text("some text 2h 30m more text"), "2h 30m");
+        assert_eq!(
+            extract_time_from_text("some text 2h 30m more text"),
+            "2h 30m"
+        );
     }
 
     #[test]
@@ -706,5 +778,107 @@ mod tests {
         assert!(has_time_pattern("45m"));
         assert!(has_time_pattern("30s"));
         assert!(!has_time_pattern("hello world"));
+    }
+
+    // Parity: T before unit → 7 (canvas confuses 7 and T in OCR output)
+    #[test]
+    fn parity_normalize_t_to_7() {
+        assert_eq!(normalize_ocr_digits("T h"), "7 h");
+        assert_eq!(normalize_ocr_digits("3T h"), "37 h");
+    }
+
+    // Parity: G and b before unit → 6 (canvas OCR confusion)
+    #[test]
+    fn parity_normalize_g_b_to_6() {
+        assert_eq!(normalize_ocr_digits("G h"), "6 h");
+        assert_eq!(normalize_ocr_digits("b h"), "6 h");
+        assert_eq!(normalize_ocr_digits("3G m"), "36 m");
+    }
+
+    // Parity: B before unit → 8
+    #[test]
+    fn parity_normalize_b_to_8() {
+        assert_eq!(normalize_ocr_digits("B h"), "8 h");
+        assert_eq!(normalize_ocr_digits("3B m"), "38 m");
+    }
+
+    // Parity: S before digit → 5 (RE_5_BEFORE_DIGIT covers digit-after-S context)
+    #[test]
+    fn parity_normalize_s_before_digit() {
+        assert_eq!(normalize_ocr_digits("S5"), "55");
+        assert_eq!(normalize_ocr_digits("S3"), "53");
+    }
+
+    // Parity: 's' unit itself must NOT be corrupted — only capital S before h/m is normalized.
+    // Canvas RE_5_BEFORE_UNIT only covers [hm], not 's'. "30s" has no capital S → unchanged.
+    #[test]
+    fn parity_normalize_s_unit_unchanged() {
+        assert_eq!(normalize_ocr_digits("30s"), "30s");
+        assert_eq!(normalize_ocr_digits("5m 30s"), "5m 30s");
+    }
+
+    // Parity: g, q before unit → 9
+    #[test]
+    fn parity_normalize_g_q_to_9() {
+        assert_eq!(normalize_ocr_digits("g h"), "9 h");
+        assert_eq!(normalize_ocr_digits("q m"), "9 m");
+        assert_eq!(normalize_ocr_digits("1g h"), "19 h");
+    }
+
+    // Parity: Z before unit → 2
+    #[test]
+    fn parity_normalize_z_to_2() {
+        assert_eq!(normalize_ocr_digits("Z h"), "2 h");
+        assert_eq!(normalize_ocr_digits("3Z m"), "32 m");
+    }
+
+    // Parity: "Xh Y h" and "Xh Y s" must fall through RE_HOUR_MIN_NO_M (group 3 present)
+    // and match RE_HOURS_ONLY → return "Xh".
+    // Canvas: same pattern — trailing unit after digit means it's not a bare minute count.
+    #[test]
+    fn parity_extract_time_rejects_ambiguous_hour_digit_with_unit() {
+        assert_eq!(
+            extract_time_from_text("4h 36 h"),
+            "4h",
+            "'4h 36 h' — trailing 'h' makes group3 present → skip Xh Y path → hours only"
+        );
+        assert_eq!(
+            extract_time_from_text("4h 36 s"),
+            "4h",
+            "'4h 36 s' — trailing 's' makes group3 present → skip Xh Y path → hours only"
+        );
+    }
+
+    // Parity: "Xm Os" — 'O' in seconds position normalized to '0'.
+    // Canvas: replaces 'O' with '0'; parses as integer → no leading-zero padding.
+    #[test]
+    fn parity_extract_time_min_sec_o_as_zero() {
+        assert_eq!(extract_time_from_text("5m Os"), "5m 0s");
+        // "12m O5s" → normalize O→0 → "12m 05s" → parse 05 as u32=5 → "12m 5s"
+        assert_eq!(extract_time_from_text("12m O5s"), "12m 5s");
+    }
+
+    // Parity: is_daily_total_page uses daily_count > app_count (strictly greater).
+    // A tie (equal counts) → false.
+    #[test]
+    fn parity_is_daily_total_page_tie_returns_false() {
+        let texts: Vec<String> = vec![
+            "TODAY".to_string(), // daily marker
+            "DAILY".to_string(), // app marker
+        ];
+        assert!(
+            !is_daily_total_page(&texts),
+            "tied daily vs app count must return false"
+        );
+    }
+
+    // Parity: is_daily_total_page ignores case (uses to_uppercase internally).
+    #[test]
+    fn parity_is_daily_total_page_case_insensitive() {
+        let texts: Vec<String> = vec!["Most".to_string(), "Used".to_string(), "today".to_string()];
+        assert!(
+            is_daily_total_page(&texts),
+            "lowercase markers must still match via to_uppercase"
+        );
     }
 }

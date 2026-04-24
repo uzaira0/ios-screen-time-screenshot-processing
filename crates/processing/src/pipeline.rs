@@ -3,18 +3,20 @@
 //! Port of Python image_processor.py — ties together all processing stages:
 //! dark mode conversion, grid detection, bar extraction, OCR, and alignment scoring.
 
-use std::path::Path;
-use std::time::Instant;
+use std::{path::Path, time::Instant};
 
 use image::RgbImage;
 use log::info;
 
-use super::bar_extraction::{compute_bar_alignment_score, slice_image};
-use super::boundary_optimizer::optimize_boundaries;
-use super::grid_detection;
-use super::image_utils::{convert_dark_mode, remove_all_but};
+#[cfg(feature = "ocr")]
 use super::ocr;
-use super::types::{DetectionMethod, GridBounds, ImageType, ProcessingError, ProcessingResult};
+use super::{
+    bar_extraction::{compute_bar_alignment_score, slice_image},
+    boundary_optimizer::optimize_boundaries,
+    grid_detection,
+    image_utils::{convert_dark_mode, remove_all_but},
+    types::{DetectionMethod, GridBounds, ImageType, ProcessingError, ProcessingResult},
+};
 
 /// Load an image from disk and convert to RGB.
 fn load_image(path: &str) -> Result<RgbImage, ProcessingError> {
@@ -41,25 +43,21 @@ fn extract_and_score(
     let roi_w = bounds.width() as u32;
     let roi_h = bounds.height() as u32;
 
-    // For battery images, apply color isolation to a copy of the ROI only (not full image)
+    // For battery images, apply color isolation to a copy of the ROI only (not full image).
+    // Canvas order: orange [255, 121, 0] first, blue [0, 134, 255] fallback.
+    // Fallback condition: inverted_sum of ROI < 10 (canvas: darkBlueSum < 10),
+    // meaning no orange pixels were found (all pixels white after filter).
     let hourly_row = if image_type == ImageType::Battery {
         let roi_base = image::imageops::crop_imm(img, roi_x, roi_y, roi_w, roi_h).to_image();
-        // Battery color in BGR [255, 121, 0] → RGB [0, 121, 255]
         let mut roi = roi_base.clone();
-        remove_all_but(&mut roi, [0, 121, 255], 30);
-        let values = slice_image(&roi, 0, 0, roi_w, roi_h);
-
-        // Dark mode fallback: if ROI is empty after color isolation,
-        // retry with inverted battery color (dark mode uses [255, 134, 0] RGB)
-        let total: f64 = values.iter().take(24).sum();
-        if total == 0.0 {
-            let mut roi2 = roi_base; // reuse cached crop, no second crop_imm
-            remove_all_but(&mut roi2, [255, 134, 0], 30);
-            let values2 = slice_image(&roi2, 0, 0, roi_w, roi_h);
-            let total2: f64 = values2.iter().take(24).sum();
-            if total2 > 0.0 { values2 } else { values }
+        remove_all_but(&mut roi, [255, 121, 0], 30);
+        let inverted_sum: u32 = roi.as_raw().iter().map(|&p| 255u32 - p as u32).sum();
+        if inverted_sum < 10 {
+            let mut roi2 = roi_base;
+            remove_all_but(&mut roi2, [0, 134, 255], 30);
+            slice_image(&roi2, 0, 0, roi_w, roi_h)
         } else {
-            values
+            slice_image(&roi, 0, 0, roi_w, roi_h)
         }
     } else {
         slice_image(img, roi_x, roi_y, roi_w, roi_h)
@@ -83,31 +81,6 @@ fn extract_and_score(
     (hourly_values, total, alignment_score)
 }
 
-/// Build a ProcessingResult for a daily total page (no bar chart).
-fn make_daily_total_result(
-    title: String,
-    total_text: String,
-    detection_method: DetectionMethod,
-    elapsed_ms: u64,
-    title_y: Option<i32>,
-) -> ProcessingResult {
-    ProcessingResult {
-        hourly_values: None,
-        total: 0.0,
-        title: Some(title),
-        total_text: if total_text.is_empty() { None } else { Some(total_text) },
-        grid_bounds: None,
-        alignment_score: None,
-        detection_method: detection_method.as_str().to_string(),
-        processing_time_ms: elapsed_ms,
-        is_daily_total: true,
-        issues: vec![],
-        has_blocking_issues: false,
-        grid_detection_confidence: None,
-        title_y_position: title_y,
-    }
-}
-
 /// Process a screenshot with automatic grid detection.
 pub fn process_image(
     path: &str,
@@ -120,7 +93,11 @@ pub fn process_image(
     convert_dark_mode(&mut img);
 
     // OCR first — needed for daily total check and always available even on grid failure
+    #[cfg(feature = "ocr")]
     let (title, _title_y, total_text) = ocr::find_title_and_total(&img)?;
+    #[cfg(not(feature = "ocr"))]
+    let (title, _title_y, total_text): (String, Option<i32>, String) =
+        (String::new(), None, String::new());
     let is_daily_total = title == "Daily Total";
 
     // Don't skip daily total pages — they still have bar charts (all apps combined).
@@ -146,7 +123,10 @@ pub fn process_image(
     let elapsed = start.elapsed().as_millis() as u64;
     info!(
         "Processed {} in {elapsed}ms (method={}, title='{}', total_text='{}', alignment={alignment_score:.2})",
-        Path::new(path).file_name().unwrap_or_default().to_string_lossy(),
+        Path::new(path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
         grid_result.method,
         title,
         total_text,
@@ -187,8 +167,11 @@ pub fn process_image_with_grid(
     let bounds = grid_detection::calculate_roi_from_clicks(upper_left, lower_right, w, h)?;
     let (hourly_values, total, alignment_score) = extract_and_score(&img, &bounds, image_type);
 
+    #[cfg(feature = "ocr")]
     let (title, _title_y, total_text) = ocr::find_title_and_total(&img)?;
-
+    #[cfg(not(feature = "ocr"))]
+    let (title, _title_y, total_text): (String, Option<i32>, String) =
+        (String::new(), None, String::new());
     let is_daily_total = title == "Daily Total";
     Ok(ProcessingResult {
         hourly_values: Some(hourly_values),
@@ -231,7 +214,11 @@ pub fn process_image_optimized(
     convert_dark_mode(&mut img);
 
     // OCR once — needed for daily total check and optimizer.
+    #[cfg(feature = "ocr")]
     let (title, _title_y, total_text) = ocr::find_title_and_total(&img)?;
+    #[cfg(not(feature = "ocr"))]
+    let (title, _title_y, total_text): (String, Option<i32>, String) =
+        (String::new(), None, String::new());
     let is_daily_total = title == "Daily Total";
 
     // Don't skip — daily total pages still have bar charts. Propagate the flag instead.
@@ -243,22 +230,31 @@ pub fn process_image_optimized(
     let initial_bounds = if grid_result.success {
         grid_result.bounds.unwrap()
     } else if detection_method == DetectionMethod::LineBased {
-        // line_based found nothing — try ocr_anchored before giving up.
-        let fallback = grid_detection::detect_grid_with_original(
-            &img,
-            DetectionMethod::OcrAnchored,
-            Some(&original_img),
-        )?;
-        match (fallback.success, fallback.bounds) {
-            (true, Some(b)) => b,
-            _ => {
-                return Err(ProcessingError::GridDetection(
-                    fallback
-                        .error
-                        .unwrap_or_else(|| "Grid detection failed (line_based + ocr_anchored)".to_string()),
-                ));
+        // line_based found nothing — try ocr_anchored before giving up (native only).
+        #[cfg(feature = "ocr")]
+        {
+            let fallback = grid_detection::detect_grid_with_original(
+                &img,
+                DetectionMethod::OcrAnchored,
+                Some(&original_img),
+            )?;
+            match (fallback.success, fallback.bounds) {
+                (true, Some(b)) => b,
+                _ => {
+                    return Err(ProcessingError::GridDetection(
+                        fallback.error.unwrap_or_else(|| {
+                            "Grid detection failed (line_based + ocr_anchored)".to_string()
+                        }),
+                    ));
+                }
             }
         }
+        #[cfg(not(feature = "ocr"))]
+        return Err(ProcessingError::GridDetection(
+            grid_result
+                .error
+                .unwrap_or_else(|| "Grid detection failed (line_based)".to_string()),
+        ));
     } else {
         return Err(ProcessingError::GridDetection(
             grid_result
@@ -276,18 +272,28 @@ pub fn process_image_optimized(
     let elapsed = start.elapsed().as_millis() as u64;
     info!(
         "Processed (optimized) {} in {elapsed}ms (method={}, shift=({},{},{}), converged={}, title='{}', total_text='{}', is_daily_total={is_daily_total})",
-        Path::new(path).file_name().unwrap_or_default().to_string_lossy(),
+        Path::new(path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
         grid_result.method,
-        opt.shift_x, opt.shift_y, opt.shift_width,
+        opt.shift_x,
+        opt.shift_y,
+        opt.shift_width,
         opt.converged,
-        title, total_text,
+        title,
+        total_text,
     );
 
     Ok(ProcessingResult {
         hourly_values: Some(hourly_values),
         total,
         title: if title.is_empty() { None } else { Some(title) },
-        total_text: if total_text.is_empty() { None } else { Some(total_text) },
+        total_text: if total_text.is_empty() {
+            None
+        } else {
+            Some(total_text)
+        },
         grid_bounds: Some(bounds),
         alignment_score: Some(alignment_score),
         detection_method: grid_result.method,
@@ -316,9 +322,17 @@ pub fn extract_hourly_data(
         let roi_y = bounds.roi_y() as u32;
         let roi_w = bounds.width() as u32;
         let roi_h = bounds.height() as u32;
-        let mut roi = image::imageops::crop_imm(&img, roi_x, roi_y, roi_w, roi_h).to_image();
-        remove_all_but(&mut roi, [0, 121, 255], 30);
-        slice_image(&roi, 0, 0, roi_w, roi_h)
+        let roi_base = image::imageops::crop_imm(&img, roi_x, roi_y, roi_w, roi_h).to_image();
+        let mut roi = roi_base.clone();
+        remove_all_but(&mut roi, [255, 121, 0], 30);
+        let inverted_sum: u32 = roi.as_raw().iter().map(|&p| 255u32 - p as u32).sum();
+        if inverted_sum < 10 {
+            let mut roi2 = roi_base;
+            remove_all_but(&mut roi2, [0, 134, 255], 30);
+            slice_image(&roi2, 0, 0, roi_w, roi_h)
+        } else {
+            slice_image(&roi, 0, 0, roi_w, roi_h)
+        }
     } else {
         slice_image(
             &img,

@@ -5,10 +5,12 @@
 
 use image::RgbImage;
 
-use super::lookup;
-use super::strategies::{
-    fast_luma, find_evenly_spaced_groups, find_horizontal_lines, validate_bar_colors,
-    validate_vertical_lines,
+use super::{
+    lookup,
+    strategies::{
+        fast_luma, find_evenly_spaced_groups, find_horizontal_lines, validate_bar_colors,
+        validate_vertical_lines,
+    },
 };
 use crate::types::{GridBounds, GridDetectionResult, ProcessingError};
 
@@ -160,9 +162,9 @@ fn refine_x_boundaries(img: &RgbImage, bounds: &GridBounds, v_positions: &[i32])
         let spacings: Vec<i32> = v_positions.windows(2).map(|w| w[1] - w[0]).collect();
         let mean_spacing = spacings.iter().sum::<i32>() as f64 / spacings.len() as f64;
 
-        let left_edge = (v_positions[0] as f64 - mean_spacing) as i32 + bounds.upper_left_x;
-        let right_edge =
-            (*v_positions.last().unwrap() as f64 + mean_spacing) as i32 + bounds.upper_left_x;
+        let left_edge = (v_positions[0] as f64 - mean_spacing).round() as i32 + bounds.upper_left_x;
+        let right_edge = (*v_positions.last().unwrap() as f64 + mean_spacing).round() as i32
+            + bounds.upper_left_x;
 
         let left_edge = left_edge.max(0);
         let right_edge = (right_edge as u32).min(w) as i32;
@@ -231,8 +233,14 @@ fn find_grid_edges(
     // edges of the search window as false grid boundaries.
     let x_start_i = x_start as i32;
     let x_end_i = x_end as i32;
-    let left = *clusters.iter().min_by_key(|&&c| (c - x_start_i).abs()).unwrap();
-    let right = *clusters.iter().min_by_key(|&&c| (c - x_end_i).abs()).unwrap();
+    let left = *clusters
+        .iter()
+        .min_by_key(|&&c| (c - x_start_i).abs())
+        .unwrap();
+    let right = *clusters
+        .iter()
+        .min_by_key(|&&c| (c - x_end_i).abs())
+        .unwrap();
 
     if right <= left {
         return None;

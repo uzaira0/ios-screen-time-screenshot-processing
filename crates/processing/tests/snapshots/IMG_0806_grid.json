@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "bounds": {
+    "upper_left_x": 83,
+    "upper_left_y": 811,
+    "lower_right_x": 721,
+    "lower_right_y": 991
+  },
+  "confidence": 0.99,
+  "method": "line_based",
+  "error": null
+}

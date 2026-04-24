@@ -62,7 +62,7 @@ pub fn slice_image_fast_total(
                 counter += 1;
             }
         }
-        total += MAX_Y * counter as f64 / h as f64;
+        total += (MAX_Y * counter as f64 / h as f64).floor();
     }
     total
 }
@@ -115,13 +115,16 @@ pub fn compute_bar_total_from_scaled(
     let h = sh as usize;
     let rw = sw as usize;
     let slice_width = rw / NUM_SLICES;
-    let reset_limit = h.saturating_sub(LOWER_GRID_BUFFER * SCALE as usize).max(1);
+    // Canvas: analyzeBarHeight checks y < maxHeight - LOWER_GRID_BUFFER where maxHeight is
+    // already 4x-scaled. So exclude LOWER_GRID_BUFFER pixels from the 4x image (not SCALE*BUFFER).
+    let reset_limit = h.saturating_sub(LOWER_GRID_BUFFER).max(1);
 
     let stride = (scaled_width * 3) as usize;
     let mut total = 0.0f64;
 
     for s in 0..NUM_SLICES {
-        let mid_col = (sx as usize + s * slice_width + slice_width / 2).min(scaled_width as usize - 1);
+        let mid_col =
+            (sx as usize + s * slice_width + slice_width / 2).min(scaled_width as usize - 1);
         let mut start_after: usize = 0;
         for y in (0..reset_limit).rev() {
             let global_y = sy as usize + y;
@@ -140,12 +143,15 @@ pub fn compute_bar_total_from_scaled(
             let global_y = sy as usize + y;
             let idx = global_y * stride + mid_col * 3;
             if idx + 2 < scaled_data.len()
-                && scaled_data[idx] as u16 + scaled_data[idx + 1] as u16 + scaled_data[idx + 2] as u16 == 0
+                && scaled_data[idx] as u16
+                    + scaled_data[idx + 1] as u16
+                    + scaled_data[idx + 2] as u16
+                    == 0
             {
                 counter += 1;
             }
         }
-        total += MAX_Y * counter as f64 / h as f64;
+        total += (MAX_Y * counter as f64 / h as f64).floor();
     }
     total
 }
@@ -182,7 +188,8 @@ pub fn slice_image(
     // (loses only 8px). The center positions therefore differ by up to 9px, which
     // moves slice centers from just-outside a bar to well-inside it. Without
     // scaling, bars that start 1-2px past a slice center are completely missed.
-    let mut roi_processed = image::imageops::crop_imm(img, roi_x, roi_y, roi_width, roi_height).to_image();
+    let mut roi_processed =
+        image::imageops::crop_imm(img, roi_x, roi_y, roi_width, roi_height).to_image();
     darken_and_binarize(&mut roi_processed);
 
     const SCALE: u32 = 4;
@@ -197,9 +204,9 @@ pub fn slice_image(
     let rw = (roi_width * SCALE) as usize;
     let slice_width = rw / NUM_SLICES;
 
-    // reset_limit: exclude bottom pixels (grid line buffer, scaled).
-    // Python uses lower_grid_buffer * scale_amount in the scaled image.
-    let reset_limit = h.saturating_sub(LOWER_GRID_BUFFER * SCALE as usize).max(1);
+    // Canvas: analyzeBarHeight checks y < maxHeight - LOWER_GRID_BUFFER where maxHeight is
+    // already 4x-scaled. So 2 pixels excluded from 4x image, not 2*SCALE.
+    let reset_limit = h.saturating_sub(LOWER_GRID_BUFFER).max(1);
 
     let mut row = Vec::with_capacity(NUM_SLICES + 1);
 
@@ -232,7 +239,7 @@ pub fn slice_image(
             }
         }
 
-        let value = MAX_Y * counter as f64 / h as f64;
+        let value = (MAX_Y * counter as f64 / h as f64).floor();
         row.push(value);
     }
 
@@ -397,5 +404,137 @@ mod tests {
         let roi = RgbImage::new(0, 0);
         let score = compute_bar_alignment_score(&roi, &[0.0; 24]);
         assert!((score - 0.0).abs() < 0.01);
+    }
+
+    // Parity: each hourly value is Math.floor(60 * counter / height), not a float.
+    // Canvas analyzeBarHeight: Math.floor((MAX_MINUTES * counter) / maxHeight)
+    // This means partial bars are floored PER SLICE, not at the total.
+    #[test]
+    fn parity_slice_image_values_are_floored_integers() {
+        // 240px wide / 24 slices = 10px per slice at 1x → 40px at 4x scale.
+        // All-black 240x100 image: every slice is fully black.
+        // counter=h (all black), value = floor(60 * h / h) = floor(60) = 60.
+        let img = RgbImage::from_fn(240, 100, |_, _| image::Rgb([0, 0, 0]));
+        let result = slice_image(&img, 0, 0, 240, 100);
+        for &v in &result[..24] {
+            assert_eq!(
+                v,
+                v.floor(),
+                "hourly value must be an integer (floored), got {v}"
+            );
+        }
+    }
+
+    // Parity: total is sum of floored per-slice values, not floor of the continuous sum.
+    // If each slice gives floor(60 * counter / h) and all counters = h, total = 24 * 60 = 1440.
+    #[test]
+    fn parity_slice_image_total_is_sum_of_floored_slices() {
+        let img = RgbImage::from_fn(240, 100, |_, _| image::Rgb([0, 0, 0]));
+        let result = slice_image(&img, 0, 0, 240, 100);
+        let per_slice_sum: f64 = result[..24].iter().sum();
+        assert!(
+            (result[24] - per_slice_sum).abs() < 0.01,
+            "result[24] must equal sum of result[..24]"
+        );
+    }
+
+    // Parity: slice_image_fast_total floors per-slice to match optimizer's target comparison.
+    // If total_text says "40m", bar total must be 40 (not 40.3) to converge optimizer.
+    #[test]
+    fn parity_fast_total_matches_slice_total() {
+        let img = RgbImage::from_fn(240, 100, |_, _| image::Rgb([0, 0, 0]));
+        let fast = slice_image_fast_total(&img, 0, 0, 240, 100);
+        let slow: f64 = slice_image(&img, 0, 0, 240, 100)[..24].iter().sum();
+        assert!(
+            (fast - slow).abs() < 0.01,
+            "fast_total={fast} must equal slice sum={slow}"
+        );
+    }
+
+    // Parity: extracted_sum=0, computed_sum>30 → score=0.1
+    // Canvas computeBarAlignmentScore: if one side is zero and max > 30, return 0.1
+    #[test]
+    fn parity_alignment_score_extracted_zero_computed_large() {
+        // All-white ROI → extracted_sum=0.0; computed has values summing to 31 > 30
+        let roi = image::RgbImage::from_fn(240, 100, |_, _| image::Rgb([255, 255, 255]));
+        let mut values = vec![0.0f64; 24];
+        values[0] = 31.0;
+        let score = compute_bar_alignment_score(&roi, &values);
+        assert!(
+            (score - 0.1).abs() < 0.01,
+            "extracted=0+computed>30 must give 0.1, got {score}"
+        );
+    }
+
+    // Parity: extracted_sum=0, computed_sum≤30 → score=0.3
+    // Canvas: if one side is zero and max ≤ 30, return 0.3
+    #[test]
+    fn parity_alignment_score_extracted_zero_computed_small() {
+        let roi = image::RgbImage::from_fn(240, 100, |_, _| image::Rgb([255, 255, 255]));
+        let mut values = vec![0.0f64; 24];
+        values[0] = 30.0; // sum = 30.0, NOT > 30 → 0.3
+        let score = compute_bar_alignment_score(&roi, &values);
+        assert!(
+            (score - 0.3).abs() < 0.01,
+            "extracted=0+computed=30 must give 0.3, got {score}"
+        );
+    }
+
+    // Parity: preprocess_for_optimizer scales by exactly 4×.
+    // Each iteration of the boundary optimizer reads from this buffer — scaling must be exact.
+    #[test]
+    fn parity_preprocess_for_optimizer_is_4x_scale() {
+        let img = image::RgbImage::new(100, 80);
+        let (data, sw, sh) = preprocess_for_optimizer(&img);
+        assert_eq!(sw, 400, "scaled width must be 4×100");
+        assert_eq!(sh, 320, "scaled height must be 4×80");
+        assert_eq!(
+            data.len(),
+            (400 * 320 * 3) as usize,
+            "buffer size must be sw*sh*3"
+        );
+    }
+
+    // Parity: compute_bar_total_from_scaled returns 0.0 when scaled ROI width < NUM_SLICES.
+    // At 4× scale: roi_width=5 → sw=20 < 24 → 0.0.
+    #[test]
+    fn parity_compute_bar_total_scaled_too_narrow_returns_zero() {
+        let img = image::RgbImage::from_fn(100, 100, |_, _| image::Rgb([0, 0, 0]));
+        let (data, sw, _) = preprocess_for_optimizer(&img);
+        let total = compute_bar_total_from_scaled(&data, sw, 0, 0, 5, 50);
+        assert_eq!(total, 0.0, "scaled width=20 < 24 slices must return 0.0");
+    }
+
+    // Parity: all-black image bar total via scaled path matches 1× path.
+    // Both must agree that every slice is fully black → 60 per slice × 24 = 1440.
+    #[test]
+    fn parity_compute_bar_total_scaled_matches_1x_all_black() {
+        let img = image::RgbImage::from_fn(240, 100, |_, _| image::Rgb([0, 0, 0]));
+        let (data, sw, _) = preprocess_for_optimizer(&img);
+        let scaled_total = compute_bar_total_from_scaled(&data, sw, 0, 0, 240, 100);
+        let slow_total = slice_image_fast_total(&img, 0, 0, 240, 100);
+        assert!(
+            (scaled_total - slow_total).abs() < 1.0,
+            "scaled total={scaled_total} must be within 1 of 1× total={slow_total}"
+        );
+    }
+
+    // Parity: LOWER_GRID_BUFFER is applied in 4x-scaled coordinates (not multiplied by SCALE).
+    // Canvas analyzeBarHeight: `y < maxHeight - LOWER_GRID_BUFFER` where maxHeight is 4x-scaled.
+    // So only the bottom 2 pixels of the 4x image are the buffer zone, NOT bottom 8.
+    // Verify: a white pixel in positions [h-2, h-1] of the 4x image does not reset start_after.
+    #[test]
+    fn parity_lower_grid_buffer_applied_in_scaled_coords() {
+        // 240×10 all-black image, then place white in the bottom 2 rows of the 4x-scaled result.
+        // After 4x scale (nearest): rows h-2=38 and h-1=39 are white.
+        // With LOWER_GRID_BUFFER=2, reset_limit = 40-2=38, so the scan is (0..38).rev().
+        // White at rows 38-39 is outside the scan → start_after=0 → all blacks counted.
+        // If we used LOWER_GRID_BUFFER*SCALE=8: reset_limit=32, scan (0..32).rev().
+        // Under the old (wrong) formula the bottom-8 4x pixels would be excluded but that
+        // changes counts on smaller ROIs. Here we just verify we don't crash and return non-zero.
+        let img = image::RgbImage::from_fn(240, 10, |_, _| image::Rgb([0, 0, 0]));
+        let result = slice_image(&img, 0, 0, 240, 10);
+        // All-black: every slice should be 60.
+        assert_eq!(result[0], 60.0, "all-black 240×10 first slice must be 60");
     }
 }

@@ -1,0 +1,40 @@
+# Test runner for crates/processing with Tesseract OCR installed.
+# Build context: monorepo root
+#   docker build -f docker/Dockerfile.processing-test -t ios-processing-test .
+#
+# Run:
+#   docker run --rm ios-processing-test
+
+FROM rust:1-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libtesseract-dev libleptonica-dev tesseract-ocr tesseract-ocr-eng \
+    pkg-config clang \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /crate
+
+# Copy manifests first so dep layers cache across source changes
+COPY crates/processing/Cargo.toml crates/processing/Cargo.lock ./
+
+# Pre-compile all deps with a stub lib — speeds up rebuilds
+RUN mkdir -p src && echo "pub fn _dummy() {}" > src/lib.rs && \
+    cargo build --tests --no-default-features 2>/dev/null || true && \
+    cargo build --tests 2>/dev/null || true && \
+    rm -rf src
+
+# Copy actual source, tests, and fixture images
+COPY crates/processing/src ./src
+COPY crates/processing/tests ./tests
+# Fixture images are mounted at runtime:
+#   docker run -v <repo>/tests/fixtures:/tests/fixtures:ro ...
+# They resolve to /tests/fixtures because CARGO_MANIFEST_DIR=/crate and
+# the test uses ../../tests/fixtures relative to that.
+
+CMD ["sh", "-c", \
+  "set -e && \
+   echo '=== no-default-features ===' && \
+   cargo test --test golden_pipeline --no-default-features 2>&1 && \
+   echo '=== default features (OCR enabled) ===' && \
+   cargo test --test golden_pipeline 2>&1 && \
+   echo '=== ALL PASSED ==='"]

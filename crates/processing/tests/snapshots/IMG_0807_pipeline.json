@@ -1,0 +1,39 @@
+{
+  "success": true,
+  "hourly_values": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    13.0,
+    37.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "total": 50.0,
+  "alignment_score": 0.957583,
+  "grid_bounds": {
+    "upper_left_x": 83,
+    "upper_left_y": 394,
+    "lower_right_x": 721,
+    "lower_right_y": 574
+  },
+  "detection_method": "line_based",
+  "is_daily_total": false
+}

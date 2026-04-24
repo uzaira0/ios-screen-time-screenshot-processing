@@ -8,11 +8,13 @@
 
 pub mod line_based;
 pub mod lookup;
+#[cfg(feature = "ocr")]
 pub mod ocr_anchored;
 pub mod strategies;
 
-use crate::types::{DetectionMethod, GridBounds, GridDetectionResult, ProcessingError};
 use image::RgbImage;
+
+use crate::types::{DetectionMethod, GridBounds, GridDetectionResult, ProcessingError};
 
 /// Detect grid bounds using the specified method.
 pub fn detect_grid(
@@ -26,11 +28,16 @@ pub fn detect_grid(
 pub fn detect_grid_with_original(
     img: &RgbImage,
     method: DetectionMethod,
-    original_img: Option<&RgbImage>,
+    #[cfg_attr(not(feature = "ocr"), allow(unused_variables))] original_img: Option<&RgbImage>,
 ) -> Result<GridDetectionResult, ProcessingError> {
     match method {
         DetectionMethod::LineBased => line_based::detect(img),
+        #[cfg(feature = "ocr")]
         DetectionMethod::OcrAnchored => ocr_anchored::detect_with_original(img, original_img),
+        #[cfg(not(feature = "ocr"))]
+        DetectionMethod::OcrAnchored => Err(ProcessingError::GridDetection(
+            "OcrAnchored detection requires the 'ocr' feature".to_string(),
+        )),
         DetectionMethod::Manual => Err(ProcessingError::GridDetection(
             "Manual detection requires user-provided coordinates".to_string(),
         )),

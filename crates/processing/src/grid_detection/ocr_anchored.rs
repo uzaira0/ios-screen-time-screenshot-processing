@@ -7,13 +7,15 @@
 use image::RgbImage;
 use log::{debug, info};
 
-use crate::image_utils::{
-    adjust_contrast_brightness, convert_dark_mode_for_ocr, extract_line, get_pixel, is_dark_mode,
-};
-use crate::ocr::{run_tesseract, OcrWord};
-use crate::types::{GridDetectionResult, ProcessingError};
-
 use super::calculate_roi;
+use crate::{
+    image_utils::{
+        adjust_contrast_brightness, convert_dark_mode_for_ocr, extract_line, get_pixel,
+        is_dark_mode,
+    },
+    ocr::{OcrWord, run_tesseract},
+    types::{GridDetectionResult, ProcessingError},
+};
 
 /// Prepare left and right image chunks for OCR anchor detection.
 ///
@@ -193,8 +195,8 @@ fn try_find_anchors(
     let (w, h) = img_processed.dimensions();
     let (img_left, img_right, right_offset) = prepare_image_chunks(img_processed);
 
-    let left_boxes = run_tesseract(&img_left, "12")?;
-    let mut right_boxes = run_tesseract(&img_right, "12")?;
+    let left_boxes = run_tesseract(&img_left, "6")?;
+    let mut right_boxes = run_tesseract(&img_right, "6")?;
 
     for b in &mut right_boxes {
         b.x += right_offset as i32;
@@ -268,7 +270,9 @@ pub fn detect_with_original(
     // thresholding which preserves text for Tesseract anchor detection.
     let orig = original_img.unwrap_or(img);
     if is_dark_mode(orig) {
-        info!("Standard anchor detection failed on dark mode image, retrying with adaptive threshold OCR");
+        info!(
+            "Standard anchor detection failed on dark mode image, retrying with adaptive threshold OCR"
+        );
         let img_ocr = convert_dark_mode_for_ocr(orig);
         let img_ocr_processed = adjust_contrast_brightness(&img_ocr, 2.0, -220);
 

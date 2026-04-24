@@ -10,6 +10,10 @@ pub mod image_utils;
 pub mod ocr;
 pub mod pipeline;
 pub mod types;
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
-pub use pipeline::{extract_hourly_data, process_image, process_image_optimized, process_image_with_grid};
+pub use pipeline::{
+    extract_hourly_data, process_image, process_image_optimized, process_image_with_grid,
+};
 pub use types::{GridBounds, ProcessingError, ProcessingResult};
