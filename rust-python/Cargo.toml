@@ -2,7 +2,11 @@
 name = "screenshot-processor-rs"
 version = "0.5.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 description = "PyO3 Python extension wrapping ios-screen-time-image-pipeline for server-side Rust processing"
+
+[lints]
+workspace = true
 
 [lib]
 name = "screenshot_processor_rs"
@@ -10,5 +14,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.23", features = ["extension-module"] }
-ios-screen-time-image-pipeline = { path = "../crates/processing" }
+ios-screen-time-image-pipeline = { path = "../crates/processing", version = "0.5.1" }
 image = "0.25"
