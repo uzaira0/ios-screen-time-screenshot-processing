@@ -45,6 +45,46 @@ import { extractLine, LineExtractionMode } from "./barExtraction.canvas";
 const BUFFER = 25;
 const MAXIMUM_OFFSET = 100;
 
+// ── Pure coordinate helpers (exported for unit tests) ─────────────────────────
+
+/**
+ * Computes left anchor coordinates from loop results.
+ * Mirrors Rust find_left_anchor fallback logic exactly.
+ */
+export function computeLeftAnchorCoords(
+  x: number, y: number, h: number,
+  lineRow: number | null, movingIndex: number,
+  lineCol: number | null, vMovingIndex: number,
+): { x: number; y: number } {
+  if (lineRow !== null) {
+    const lowerLeftY = y - BUFFER + lineRow - movingIndex + 1;
+    const lowerLeftX = lineCol !== null
+      ? x - BUFFER + lineCol - vMovingIndex + 1
+      : x - BUFFER;
+    return { x: lowerLeftX, y: lowerLeftY };
+  }
+  return { x: x - BUFFER, y: y + h };
+}
+
+/**
+ * Computes right anchor coordinates from loop results.
+ * Mirrors Rust find_right_anchor fallback logic exactly.
+ */
+export function computeRightAnchorCoords(
+  x: number, y: number,
+  lineRow: number | null, movingIndex: number,
+  lineCol: number | null, vMovingIndex: number,
+): { x: number; y: number } {
+  if (lineRow !== null) {
+    const upperRightY = y + lineRow - movingIndex + 1;
+    const upperRightX = lineCol !== null
+      ? x - BUFFER + lineCol - vMovingIndex + 1
+      : x - BUFFER;
+    return { x: upperRightX, y: upperRightY };
+  }
+  return { x: x - BUFFER, y: y };
+}
+
 interface OCRData {
   text: string[];
   left: number[];
