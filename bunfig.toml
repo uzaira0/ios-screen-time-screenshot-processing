@@ -1,0 +1,4 @@
+[test]
+# Scope bun unit tests to frontend/src only. Playwright e2e specs in
+# frontend/tests/ are run separately via `bun run test:e2e`.
+root = "./frontend/src"
