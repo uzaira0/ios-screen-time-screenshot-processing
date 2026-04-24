@@ -299,14 +299,18 @@ function findLeftAnchor(
       const x = ocrData.left[i];
       const y = ocrData.top[i];
       const w = ocrData.width[i];
+      const h = ocrData.height[i];
 
-      if (x === undefined || y === undefined || w === undefined) {
+      if (x === undefined || y === undefined || w === undefined || h === undefined) {
         continue;
       }
 
+      // Parity: Rust find_left_anchor uses nested loops — only search for the
+      // vertical line if a horizontal line was found first. When neither loop
+      // finds a line the fallbacks match Rust's explicit return values:
+      //   horizontal found, vertical not → x - BUFFER  (Rust line 117)
+      //   no horizontal at all           → y + h       (Rust line 122)
       let lineRow: number | null = null;
-      let lineCol: number | null = null;
-
       let movingIndex = 0;
       while (lineRow === null && movingIndex < MAXIMUM_OFFSET) {
         const extractedLine = extractLine(
@@ -323,27 +327,34 @@ function findLeftAnchor(
         movingIndex++;
       }
 
-      const lowerLeftY = y - BUFFER + (lineRow || 0) - movingIndex + 1;
+      if (lineRow !== null) {
+        const lowerLeftY = y - BUFFER + lineRow - movingIndex + 1;
 
-      movingIndex = 0;
-      while (lineCol === null && movingIndex < MAXIMUM_OFFSET) {
-        const extractedLine = extractLine(
-          img,
-          x - movingIndex - BUFFER,
-          x - movingIndex + BUFFER,
-          y - BUFFER,
-          y,
-          LineExtractionMode.VERTICAL,
-        );
-        if (extractedLine !== 0) {
-          lineCol = extractedLine;
+        let lineCol: number | null = null;
+        let vMovingIndex = 0;
+        while (lineCol === null && vMovingIndex < MAXIMUM_OFFSET) {
+          const extractedLine = extractLine(
+            img,
+            x - vMovingIndex - BUFFER,
+            x - vMovingIndex + BUFFER,
+            y - BUFFER,
+            y,
+            LineExtractionMode.VERTICAL,
+          );
+          if (extractedLine !== 0) {
+            lineCol = extractedLine;
+          }
+          vMovingIndex++;
         }
-        movingIndex++;
+
+        const lowerLeftX =
+          lineCol !== null ? x - BUFFER + lineCol - vMovingIndex + 1 : x - BUFFER;
+
+        return { found: true, x: lowerLeftX, y: lowerLeftY };
       }
 
-      const lowerLeftX = x - BUFFER + (lineCol || 0) - movingIndex + 1;
-
-      return { found: true, x: lowerLeftX, y: lowerLeftY };
+      // Fallback: no horizontal grid line found — approximate from text position.
+      return { found: true, x: x - BUFFER, y: y + h };
     }
   }
 
@@ -378,8 +389,6 @@ function findRightAnchor(
       }
 
       let lineRow: number | null = null;
-      let lineCol: number | null = null;
-
       let movingIndex = 0;
       while (lineRow === null && movingIndex < MAXIMUM_OFFSET) {
         const extractedLine = extractLine(
@@ -396,27 +405,35 @@ function findRightAnchor(
         movingIndex++;
       }
 
-      const upperRightY = y + (lineRow || 0) - movingIndex + 1;
+      if (lineRow !== null) {
+        const upperRightY = y + lineRow - movingIndex + 1;
 
-      movingIndex = 0;
-      while (lineCol === null && movingIndex < MAXIMUM_OFFSET) {
-        const extractedLine = extractLine(
-          img,
-          x - BUFFER - movingIndex,
-          x - movingIndex,
-          y,
-          y + h + BUFFER,
-          LineExtractionMode.VERTICAL,
-        );
-        if (extractedLine !== 0) {
-          lineCol = extractedLine;
+        let lineCol: number | null = null;
+        let vMovingIndex = 0;
+        while (lineCol === null && vMovingIndex < MAXIMUM_OFFSET) {
+          const extractedLine = extractLine(
+            img,
+            x - BUFFER - vMovingIndex,
+            x - vMovingIndex,
+            y,
+            y + h + BUFFER,
+            LineExtractionMode.VERTICAL,
+          );
+          if (extractedLine !== 0) {
+            lineCol = extractedLine;
+          }
+          vMovingIndex++;
         }
-        movingIndex++;
+
+        const upperRightX =
+          lineCol !== null
+            ? x - BUFFER + lineCol - vMovingIndex + 1
+            : x - BUFFER;
+        return { found: true, x: upperRightX, y: upperRightY };
       }
 
-      const upperRightX = x - BUFFER + (lineCol || 0) - movingIndex + 1;
-
-      return { found: true, x: upperRightX, y: upperRightY };
+      // Fallback: no horizontal grid line found — approximate from text position.
+      return { found: true, x: x - BUFFER, y: y };
     }
   }
 
