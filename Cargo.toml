@@ -5,3 +5,13 @@ members = [
     "rust-python",             # screenshot-processor-rs (PyO3 Python extension)
 ]
 resolver = "2"
+
+# Shared lint defaults. Members opt in with `[lints] workspace = true`
+# (see frontend/src-tauri and rust-python). crates/processing intentionally does
+# NOT inherit because its wasm-emscripten module needs `unsafe_code = "allow"`
+# (C FFI with #[no_mangle] and raw pointer ops) — it sets its own lints.
+[workspace.lints.rust]
+
+[workspace.lints.clippy]
+todo = "warn"
+unimplemented = "warn"
