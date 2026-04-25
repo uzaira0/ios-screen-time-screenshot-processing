@@ -26,8 +26,11 @@ export default defineConfig({
   testMatch: /wasm-stress\.spec\.ts$/,
   fullyParallel: false,
   workers: 1,
-  // 90 minutes — covers worst-case 1000-screenshot OCR on a slow CI runner.
-  timeout: 90 * 60_000,
+  // 45 minutes total. Dry-run at N=20 takes 18s; projecting to 1000 puts the
+  // happy path near 15–18 min, with the rest of the budget covering OCR
+  // worst-case (3s/screenshot on a slow runner) and the post-preprocessing
+  // walk through annotation + export.
+  timeout: 45 * 60_000,
   expect: { timeout: 60_000 },
   globalSetup: path.resolve(__dirname, "tests/setup/wasm-stress-global-setup.ts"),
   use: {

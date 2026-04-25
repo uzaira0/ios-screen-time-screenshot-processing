@@ -10,8 +10,13 @@
  *      its Run button — same control a real user would click.
  *   5. After each stage, poll IndexedDB until that stage's completed count
  *      hits 1000 (or the test times out).
- *   6. Navigate to /annotate, walk a few screenshots, verify they render.
- *   7. Reload, confirm groups + state persist.
+ *   6. Go back to /, verify the group card surfaces the completed count.
+ *   7. Click Annotate, walk forward through several screenshots via the
+ *      navigate-next button, edit one hourly value, hit V to verify.
+ *   8. Click Export CSV — catch the download, assert it has a header + the
+ *      expected number of data rows.
+ *   9. Visit Settings → confirm the Local Storage section reports usage > 0.
+ *  10. Reload, confirm groups + state persist.
  *
  * This is NOT in the smoke suite. Run on demand:
  *   bun run test:e2e:stress
@@ -144,7 +149,13 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("WASM stress: 1000-screenshot full pipeline", () => {
   test(`uploads ${COUNT} screenshots and runs every active stage`, async ({ page }) => {
-    test.setTimeout(90 * 60_000); // 90 minutes — OCR is the long pole
+    // Match the suite cap. With OCR ≈ 1s/screenshot single-threaded plus
+    // upload + annotation walk + export, 45 min covers 1000 with headroom.
+    test.setTimeout(45 * 60_000);
+
+    // Walk this many screenshots in the annotation phase. Touching all 1000
+    // would multiply the post-OCR phase by ~3 minutes for no extra signal.
+    const ANNOTATION_WALK = Math.min(20, COUNT - 1);
 
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
@@ -192,7 +203,7 @@ test.describe("WASM stress: 1000-screenshot full pipeline", () => {
 
       // Poll IDB. OCR can take ~1–3s per screenshot single-threaded; budget
       // accordingly. Device-detection and cropping are ms each.
-      const stageBudgetMs = stage === "ocr" ? 60 * 60_000 : 10 * 60_000;
+      const stageBudgetMs = stage === "ocr" ? 30 * 60_000 : 10 * 60_000;
       const result = await pollUntil(
         () => idbStageStatusCounts(page, stage),
         (s) => s.completed + s.failed >= COUNT && s.running === 0,
@@ -211,21 +222,97 @@ test.describe("WASM stress: 1000-screenshot full pipeline", () => {
       expect(result.running, `${stage} left rows in 'running'`).toBe(0);
     }
 
-    // 5. Navigate to annotate — at least one screenshot should render.
-    await page.goto("/annotate");
-    await page.waitForTimeout(3000);
-    const annotateBody = await page.textContent("body");
-    expect(annotateBody!.length).toBeGreaterThan(50);
+    // 5. Back to Home — the group card should show the completed count.
+    await page.goto("/");
+    const groupCard = page.getByTestId("group-card").first();
+    await expect(groupCard).toBeVisible({ timeout: 30_000 });
+    const totalBtn = groupCard.getByTestId("total-screenshots");
+    await expect(totalBtn).toContainText(String(COUNT), { timeout: 10_000 });
 
-    // 6. Reload — group and screenshots must persist (IndexedDB-backed).
+    // 6. Click Annotate — the workspace should mount on the first screenshot
+    //    and walk forward via the navigate-next button (same as a user
+    //    pressing the right-arrow key, which the workspace also accepts).
+    await page.getByRole("link", { name: "Annotate" }).click();
+    await expect(page).toHaveURL(/\/annotate/);
+    const workspace = page.getByTestId("annotation-workspace");
+    await expect(workspace).toBeVisible({ timeout: 30_000 });
+
+    const nextBtn = page.getByTestId("navigate-next");
+    for (let i = 0; i < ANNOTATION_WALK; i++) {
+      await expect(nextBtn).toBeEnabled({ timeout: 15_000 });
+      await nextBtn.click();
+      // Workspace stays mounted; the inner <img> swaps. A short settle wait
+      // is enough — we're stress-testing render/load, not animation timing.
+      await expect(workspace).toBeVisible();
+    }
+
+    // 7. Edit one hourly value via the editor input. The hour-input fields
+    //    accept 0–60; type a non-zero value and trigger blur so auto-save
+    //    runs. Then verify (V key — same shortcut a power user would use).
+    const hourInput = page.getByTestId("hour-input-12");
+    await expect(hourInput).toBeVisible({ timeout: 10_000 });
+    await hourInput.fill("");
+    await hourInput.fill("30");
+    await hourInput.blur();
+    await page.waitForTimeout(500); // auto-save debounce
+    await page.keyboard.press("v");
+
+    // Confirm the edit landed in IndexedDB. WASM annotations live in the
+    // "annotations" object store keyed by screenshot id.
+    const sawEditedAnnotation = await page.evaluate(async () => {
+      return new Promise<boolean>((resolve) => {
+        const req = indexedDB.open("ScreenshotProcessorDB");
+        req.onsuccess = () => {
+          try {
+            const tx = req.result.transaction("annotations", "readonly");
+            const store = tx.objectStore("annotations");
+            const all = store.getAll();
+            all.onsuccess = () => {
+              const rows = all.result as Array<{ hourly_values?: Record<string, number> }>;
+              resolve(rows.some((r) => (r.hourly_values?.["12"] ?? 0) === 30));
+            };
+            all.onerror = () => resolve(false);
+          } catch { resolve(false); }
+        };
+        req.onerror = () => resolve(false);
+      });
+    });
+    expect(sawEditedAnnotation, "edited hourly value did not persist to IDB").toBe(true);
+
+    // 8. Export CSV. The Home page's Export button triggers a Blob download.
+    await page.goto("/");
+    await expect(groupCard).toBeVisible();
+    const downloadPromise = page.waitForEvent("download", { timeout: 60_000 });
+    await page.getByRole("button", { name: /export csv/i }).first().click();
+    const download = await downloadPromise;
+    const csvPath = await download.path();
+    expect(csvPath, "CSV download produced no file").toBeTruthy();
+    const fs = await import("node:fs/promises");
+    const csvText = await fs.readFile(csvPath!, "utf8");
+    const csvLines = csvText.split(/\r?\n/).filter((l) => l.length > 0);
+    // Expect header + one row per screenshot
+    expect(csvLines.length, "CSV row count did not match screenshot count").toBe(COUNT + 1);
+    expect(csvLines[0], "CSV header missing expected columns").toMatch(/Screenshot ID/);
+
+    // 9. Settings page — Local Storage section should report non-zero usage
+    //    after dropping the screenshots into IDB+OPFS. The Used label is a
+    //    standalone span; match it exactly to avoid colliding with prose
+    //    elsewhere on the page that contains the substring "used".
+    await page.goto("/settings");
+    await expect(page.getByRole("heading", { name: /local storage/i })).toBeVisible({ timeout: 10_000 });
+    const usageRegion = page.getByText("Used", { exact: true }).locator("..");
+    await expect(usageRegion).toContainText(/\d+(\.\d+)?\s?(KB|MB|GB)\s\/\s\d+(\.\d+)?\s?(KB|MB|GB)/);
+
+    // 10. Reload — IndexedDB-backed state must persist.
     await page.goto("/");
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
-    await page.waitForTimeout(2000);
     const finalCount = await idbScreenshotCount(page);
     expect(finalCount).toBe(COUNT);
+    await expect(page.getByTestId("group-card").first()).toBeVisible({ timeout: 15_000 });
 
-    // 7. No uncaught JS errors during any of the above.
+    // No uncaught JS errors during any of the above (the same transient
+    // resolution race the smoke suite filters is allowed here too).
     const critical = errors.filter((e) => !e.includes("Service not registered"));
     expect(critical, `uncaught JS errors:\n${critical.join("\n")}`).toEqual([]);
   });
