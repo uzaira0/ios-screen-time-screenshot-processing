@@ -408,6 +408,11 @@ async function build() {
   const assetEntries: string[] = [];
   for await (const file of assetGlob.scan(join(DIST_DIR, "assets"))) {
     if (file.endsWith(".map")) continue;
+    // The PHI NER worker (~880KB) is only used by the server-mode PHI
+    // detection path. WASM-mode public deploys (GitHub Pages) gate that
+    // feature off, so precaching it would just waste first-load bandwidth.
+    // Server-mode users still load it from network on demand when PHI runs.
+    if (/^nerWorker-[A-Za-z0-9]+\.js$/.test(file)) continue;
     assetEntries.push(prefix(`/assets/${file}`));
   }
 
