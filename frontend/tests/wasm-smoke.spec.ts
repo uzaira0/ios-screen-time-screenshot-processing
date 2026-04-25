@@ -126,12 +126,21 @@ test.describe("WASM Navigation", () => {
   });
 
   test("header shows all expected nav links", async ({ page }) => {
+    // WASM mode hides Upload, Consensus, and Admin (see Header.tsx) — those
+    // require server features (cross-rater consensus, admin endpoints, the
+    // separate upload page). The "/" route is labelled "Groups" rather than
+    // "Home"; renaming is a separate UX item.
     const nav = page.locator("nav");
-    await expect(nav.getByText("Home")).toBeVisible();
     await expect(nav.getByText("Preprocessing")).toBeVisible();
+    await expect(nav.getByText("Groups")).toBeVisible();
     await expect(nav.getByText("Annotate")).toBeVisible();
-    await expect(nav.getByText("Consensus")).toBeVisible();
     await expect(nav.getByText("Settings")).toBeVisible();
+  });
+
+  test("Consensus link is NOT shown in WASM mode", async ({ page }) => {
+    await expect(
+      page.locator("nav").getByText("Consensus", { exact: true }),
+    ).not.toBeVisible();
   });
 
   test("Upload link is NOT shown in WASM mode", async ({ page }) => {

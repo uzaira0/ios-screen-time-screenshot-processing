@@ -55,7 +55,6 @@ dev-dist/
 lighthouse-*.html
 lighthouse-*.json
 
-# WASM build artifacts (produced by scripts/build-wasm-bindgen.sh and
-# scripts/build-wasm-emscripten.sh). CI rebuilds them every deploy.
-src/wasm/pkg/
-src/wasm/pkg-em/
+# WASM build artifacts (produced by scripts/build-wasm-emscripten.sh).
+# CI rebuilds them every deploy; do not commit.
+public/pipeline-em/

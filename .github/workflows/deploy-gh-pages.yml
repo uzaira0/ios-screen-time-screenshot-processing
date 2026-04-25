@@ -1,0 +1,103 @@
+name: Deploy WASM site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Avoid stomping on a pages deploy already in flight.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (Rust + leptess + Bun)
+    runs-on: ubuntu-22.04
+
+    env:
+      # Resolved into manifest start_url/scope and an injected <base href> by
+      # frontend/server/build.ts.
+      BASE_PATH: /${{ github.event.repository.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-emscripten
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          shared-key: wasm-emscripten
+          cache-on-failure: true
+
+      - name: Cache leptonica + tesseract WASM build
+        # The leptonica + tesseract source-builds are deterministic given a
+        # fixed (LEPTONICA_TAG, TESSERACT_TAG, emscripten-version) tuple. Cache
+        # the compiled static libs so subsequent runs skip the C compile.
+        uses: actions/cache@v4
+        with:
+          path: build/wasm-emscripten/leptonica-install
+          key: leptonica-1.84.1-em-${{ runner.os }}-v1
+      - name: Cache tesseract WASM build
+        uses: actions/cache@v4
+        with:
+          path: build/wasm-emscripten/tesseract-install
+          key: tesseract-5.4.1-em-${{ runner.os }}-leptonica-1.84.1-v1
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.0
+          actions-cache-folder: emsdk-cache
+
+      - name: Build Rust+leptess WASM pipeline
+        run: bash scripts/build-wasm-emscripten.sh
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Build frontend (subpath-aware)
+        working-directory: frontend
+        env:
+          BASE_PATH: ${{ env.BASE_PATH }}
+          # Surface the commit SHA in the version footer.
+          VITE_COMMIT_SHA: ${{ github.sha }}
+        run: bun run build
+
+      - name: Stage WASM artifacts into dist/
+        # build-wasm-emscripten.sh writes into frontend/public/pipeline-em/,
+        # which Bun.build copied into dist/pipeline-em/. Sanity-check.
+        run: |
+          ls -la frontend/dist/pipeline-em/
+          test -f frontend/dist/pipeline-em/IosScreenTimePipeline.js
+          test -f frontend/dist/pipeline-em/IosScreenTimePipeline.wasm
+          test -f frontend/dist/pipeline-em/eng.traineddata
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+  deploy:
+    name: Deploy to Pages
+    needs: build
+    runs-on: ubuntu-22.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -7,7 +7,7 @@
     "build": "bun run typecheck && bun run server/build.ts",
     "preview": "bun run dist/index.html",
     "typecheck": "bunx tsc --noEmit",
-    "wasm:build": "../scripts/build-wasm-bindgen.sh",
+    "wasm:build": "../scripts/build-wasm-emscripten.sh",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "check": "bun run typecheck && bun run lint",
