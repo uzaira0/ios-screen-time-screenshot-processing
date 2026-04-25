@@ -321,4 +321,15 @@ pub extern "C" fn pipeline_extract_ocr(
     write_json(&json, out, out_len)
 }
 
-fn main() {}
+fn main() {
+    // Force-reference each C-ABI export so rustc doesn't dead-code-eliminate
+    // them before wasm-ld sees the bin's object. emcc's --export-table /
+    // EXPORTED_FUNCTIONS only works on symbols that survive the rust→object
+    // link step. Without these black-boxed references, wasm-ld errors with
+    // `symbol exported via --export not found: pipeline_alloc` etc.
+    std::hint::black_box(pipeline_alloc as *const ());
+    std::hint::black_box(pipeline_free as *const ());
+    std::hint::black_box(pipeline_process as *const ());
+    std::hint::black_box(pipeline_detect_grid as *const ());
+    std::hint::black_box(pipeline_extract_ocr as *const ());
+}
