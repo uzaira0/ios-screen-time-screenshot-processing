@@ -1,8 +1,9 @@
 /**
- * Client-side PHI detection using Tesseract.js OCR + Transformers.js NER + regex patterns.
+ * Client-side PHI detection using the Rust+leptess OCR (via Emscripten WASM)
+ * + Transformers.js NER + regex patterns.
  *
  * Replicates the server's Presidio + regex pipeline:
- * 1. OCR with Tesseract.js → words with bounding boxes
+ * 1. OCR with `pipeline_phi_words` (Rust + libtesseract) → words with bboxes
  * 2. NER with BERT (via Web Worker) → PERSON, ORG, LOC, MISC entities
  * 3. Regex patterns → email, phone, SSN, MRN, etc.
  * 4. Allow-list filtering → remove known false positives (app names, UI labels)
@@ -10,6 +11,7 @@
  */
 
 import type { PHIRegion } from "@/core/interfaces/IPreprocessingService";
+import { emPhiWords } from "@/core/implementations/wasm/processing/emscripten/pipelineLoader";
 export type { PHIRegion };
 
 export interface PHIDetectionResult {
@@ -166,111 +168,64 @@ async function runNER(text: string): Promise<NERResult> {
   });
 }
 
+/**
+ * No-op kept for backwards compatibility with WASMPreprocessingService —
+ * the OCR engine is now the shared Emscripten pipeline module which has its
+ * own (singleton) lifecycle. No Tesseract.js worker to tear down.
+ */
+export function terminateTesseractWorker(): void {}
+
 // ---------------------------------------------------------------------------
-// Tesseract worker management — singleton, reused across screenshots
+// OCR helper — full-page Rust OCR via the Emscripten pipeline.
+//
+// Replaces Tesseract.js. The Rust side returns word-level boxes with
+// confidence and pre-computed char offsets into a joined `full_text`,
+// matching the contract that NER/regex/allow-list code below already uses.
 // ---------------------------------------------------------------------------
 
-let tesseractWorker: Awaited<ReturnType<typeof import("tesseract.js").createWorker>> | null = null;
-
-async function getTesseractWorker() {
-  if (!tesseractWorker) {
-    let timedOut = false;
-    const workerPromise = (async () => {
-      const Tesseract = await import("tesseract.js");
-      return Tesseract.createWorker("eng", undefined, {
-        workerPath: new URL("/tesseract-worker.min.js", window.location.origin).href,
-        corePath: new URL("/", window.location.origin).href,
-        langPath: new URL("/", window.location.origin).href,
-      });
-    })();
-
-    const result = await Promise.race([
-      workerPromise,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => { timedOut = true; reject(new Error("Tesseract worker failed to initialize in 15s")); }, 15_000),
-      ),
-    ]);
-    tesseractWorker = result;
-
-    // If timeout fired but worker eventually resolves, terminate the zombie
-    workerPromise.then((worker) => {
-      if (timedOut) worker.terminate();
-    }).catch(() => {});
-  }
-  return tesseractWorker;
-}
-
-export function terminateTesseractWorker(): void {
-  if (tesseractWorker) {
-    tesseractWorker.terminate();
-    tesseractWorker = null;
+async function blobToImageData(imageBlob: Blob): Promise<ImageData> {
+  const imageBitmap = await createImageBitmap(imageBlob);
+  try {
+    const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error(
+        `Failed to get 2D context for ${imageBitmap.width}x${imageBitmap.height} OffscreenCanvas`,
+      );
+    }
+    ctx.drawImage(imageBitmap, 0, 0);
+    return ctx.getImageData(0, 0, imageBitmap.width, imageBitmap.height);
+  } finally {
+    imageBitmap.close();
   }
 }
-
-// ---------------------------------------------------------------------------
-// OCR helper — extract words with bounding boxes using Tesseract.js
-// ---------------------------------------------------------------------------
 
 async function ocrWithBboxes(imageBlob: Blob): Promise<{
   words: OCRWord[];
   fullText: string;
   confidence: number;
 }> {
-  const imageBitmap = await createImageBitmap(imageBlob);
-  const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height);
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    imageBitmap.close();
-    throw new Error(`Failed to get 2D context for ${imageBitmap.width}x${imageBitmap.height} OffscreenCanvas`);
+  const imageData = await blobToImageData(imageBlob);
+  const result = await emPhiWords(imageData);
+
+  if (!result.success || !result.words) {
+    throw new Error(`PHI OCR failed: ${result.error ?? "unknown"}`);
   }
-  ctx.drawImage(imageBitmap, 0, 0);
-  imageBitmap.close();
 
-  const worker = await getTesseractWorker();
-  // Tesseract.js types expect HTMLCanvasElement but OffscreenCanvas works at runtime.
-  // blocks: true is required — Tesseract.js v7 defaults blocks to false.
-  const result = await worker.recognize(canvas as unknown as HTMLCanvasElement, {}, { blocks: true });
-
-  const words: OCRWord[] = [];
-  let fullText = "";
-  let totalConfidence = 0;
-  let wordCount = 0;
-
-  // Tesseract.js v7: blocks -> paragraphs -> lines -> words
-  const page = result.data;
-  for (const block of page.blocks ?? []) {
-    for (const para of block.paragraphs) {
-      for (const line of para.lines) {
-        for (const word of line.words) {
-          const charStart = fullText.length;
-          fullText += word.text;
-          const charEnd = fullText.length;
-
-          words.push({
-            text: word.text,
-            bbox: word.bbox,
-            confidence: word.confidence,
-            charStart,
-            charEnd,
-          });
-
-          totalConfidence += word.confidence;
-          wordCount++;
-
-          fullText += " ";
-        }
-        // Replace trailing space with newline for line breaks
-        if (fullText.endsWith(" ")) {
-          fullText = fullText.slice(0, -1) + "\n";
-        }
-      }
-    }
-  }
+  const words: OCRWord[] = result.words.map((w) => ({
+    text: w.text,
+    bbox: { x0: w.x, y0: w.y, x1: w.x + w.w, y1: w.y + w.h },
+    confidence: w.conf,
+    charStart: w.char_start,
+    charEnd: w.char_end,
+  }));
 
   return {
     words,
-    fullText: fullText.trim(),
-    confidence: wordCount > 0 ? totalConfidence / wordCount : 0,
+    fullText: result.full_text ?? "",
+    // Tesseract conf is 0–100; downstream consumers don't care about scale,
+    // but keep it as a number.
+    confidence: result.avg_confidence ?? 0,
   };
 }
 

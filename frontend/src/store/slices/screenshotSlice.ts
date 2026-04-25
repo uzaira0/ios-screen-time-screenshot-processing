@@ -74,6 +74,7 @@ export const createScreenshotSlice = (
         return;
       }
 
+      // eslint-disable-next-line prefer-const
       let { annotation: prefilledAnnotation, processingIssues, isAutoProcessed } = buildAnnotationFromScreenshot(screenshot);
 
       // Skip processing if THIS USER has already verified - their work is frozen

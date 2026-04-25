@@ -94,7 +94,9 @@ test.describe("WASM Authentication", () => {
       .getByRole("button", { name: /get started/i })
       .click();
     await expect(page).not.toHaveURL(/\/login/);
-    await expect(page.getByText(/alice/i)).toBeVisible();
+    // Pin to the header username chip — the welcome toast also contains
+    // "Alice", which trips strict mode.
+    await expect(page.getByText("Alice", { exact: true })).toBeVisible();
   });
 
   test("shows optional server sync checkbox", async ({ page }) => {

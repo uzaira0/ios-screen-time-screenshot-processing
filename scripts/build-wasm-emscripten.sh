@@ -260,7 +260,7 @@ export BINDGEN_EXTRA_CLANG_ARGS=" \
   --target=$HOST_TRIPLE"
 
 # ── Step 5: cargo build ───────────────────────────────────────────────────────
-EXPORTED_FNS='_pipeline_alloc,_pipeline_free,_pipeline_process,_pipeline_detect_grid,_pipeline_extract_ocr,_malloc,_free'
+EXPORTED_FNS='_pipeline_alloc,_pipeline_free,_pipeline_process,_pipeline_detect_grid,_pipeline_extract_ocr,_pipeline_phi_words,_malloc,_free'
 EXPORTED_RUNTIME='ccall,cwrap,FS,HEAPU8,HEAPU32'
 
 LINK_ARGS=(

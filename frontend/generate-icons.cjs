@@ -1,8 +1,9 @@
-// Simple icon generation script
-const fs = require('fs');
-const path = require('path');
+// Generate the SVG master icon and PNG rasters for the PWA manifest.
+// Sharp is used for rasterization (already a transitive dep).
+const fs = require("fs");
+const path = require("path");
+const sharp = require("sharp");
 
-// Create a simple SVG icon
 const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <rect width="512" height="512" fill="#3b82f6"/>
@@ -14,17 +15,41 @@ const svg = `
 </svg>
 `.trim();
 
-const iconsDir = path.join(__dirname, 'public', 'icons');
-
-// Ensure directory exists
+const iconsDir = path.join(__dirname, "public", "icons");
 if (!fs.existsSync(iconsDir)) {
   fs.mkdirSync(iconsDir, { recursive: true });
 }
 
-// Write SVG icon
-fs.writeFileSync(path.join(iconsDir, 'icon.svg'), svg);
+fs.writeFileSync(path.join(iconsDir, "icon.svg"), svg);
+console.log("✓ SVG icon written to public/icons/icon.svg");
 
-console.log('✓ SVG icon generated at public/icons/icon.svg');
-console.log('\nNote: For production, generate PNG icons using:');
-console.log('  npm install -g pwa-asset-generator');
-console.log('  pwa-asset-generator public/icons/icon.svg public/icons --icon-only');
+const sizes = [192, 512];
+const svgBuf = Buffer.from(svg, "utf-8");
+
+(async () => {
+  for (const size of sizes) {
+    const outFile = path.join(iconsDir, `icon-${size}.png`);
+    await sharp(svgBuf, { density: 384 }).resize(size, size).png().toFile(outFile);
+    console.log(`✓ PNG ${size}×${size} written to public/icons/icon-${size}.png`);
+  }
+  // Maskable: pad the artwork inside a 80% safe area (centered) over the
+  // background colour so Android's adaptive icon mask doesn't clip the SP glyph.
+  const maskableSize = 512;
+  const innerSize = Math.round(maskableSize * 0.8);
+  const innerPng = await sharp(svgBuf, { density: 384 }).resize(innerSize, innerSize).png().toBuffer();
+  await sharp({
+    create: {
+      width: maskableSize,
+      height: maskableSize,
+      channels: 4,
+      background: { r: 59, g: 130, b: 246, alpha: 1 },
+    },
+  })
+    .composite([{ input: innerPng, gravity: "center" }])
+    .png()
+    .toFile(path.join(iconsDir, "icon-maskable-512.png"));
+  console.log("✓ PNG maskable 512×512 written to public/icons/icon-maskable-512.png");
+})().catch((err) => {
+  console.error("Icon generation failed:", err);
+  process.exit(1);
+});

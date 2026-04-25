@@ -4,8 +4,9 @@
  * Builds the app bundle, CSS, service worker, and generates index.html + manifest.
  */
 
-import { rm, mkdir, copyFile } from "fs/promises";
+import { rm, mkdir, copyFile, readFile } from "fs/promises";
 import { join, resolve } from "path";
+import { execSync } from "child_process";
 
 const ROOT_DIR = resolve(import.meta.dir, "..");
 const SRC_DIR = join(ROOT_DIR, "src");
@@ -46,9 +47,26 @@ const pathAliasPlugin: import("bun").BunPlugin = {
   },
 };
 
+function resolveCommitSha(): string {
+  const envSha = process.env.VITE_COMMIT_SHA || process.env.GITHUB_SHA;
+  if (envSha) return envSha.slice(0, 7);
+  try {
+    return execSync("git rev-parse --short HEAD", { cwd: ROOT_DIR, stdio: ["ignore", "pipe", "ignore"] })
+      .toString()
+      .trim();
+  } catch {
+    return "dev";
+  }
+}
+
 async function build() {
   console.log("\x1b[34m[build]\x1b[0m Starting production build...\n");
   const startTime = performance.now();
+
+  const pkg = JSON.parse(await readFile(join(ROOT_DIR, "package.json"), "utf-8"));
+  const appVersion: string = pkg.version ?? "dev";
+  const commitSha = resolveCommitSha();
+  console.log(`\x1b[33m[build]\x1b[0m version=${appVersion} sha=${commitSha}`);
 
   // Clean dist directory
   await rm(DIST_DIR, { recursive: true, force: true });
@@ -93,6 +111,8 @@ async function build() {
     ],
     define: {
       "process.env.NODE_ENV": JSON.stringify("production"),
+      __APP_VERSION__: JSON.stringify(appVersion),
+      __COMMIT_SHA__: JSON.stringify(commitSha),
     },
   });
 
@@ -285,7 +305,25 @@ async function build() {
         src: prefix("/icons/icon.svg"),
         sizes: "any",
         type: "image/svg+xml",
-        purpose: "any maskable",
+        purpose: "any",
+      },
+      {
+        src: prefix("/icons/icon-192.png"),
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "any",
+      },
+      {
+        src: prefix("/icons/icon-512.png"),
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "any",
+      },
+      {
+        src: prefix("/icons/icon-maskable-512.png"),
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "maskable",
       },
     ],
     screenshots: [
@@ -360,6 +398,55 @@ async function build() {
     prefer_related_applications: false,
   };
   await Bun.write(join(DIST_DIR, "manifest.json"), JSON.stringify(manifest, null, 2));
+
+  // Service worker precache manifest. The SW reads this file on `install` and
+  // populates its caches with every URL listed. This is what makes the app
+  // work on a flight-mode reload — without it, only the bare HTML shell is
+  // cached and the JS/WASM/tessdata chunks 404 when the network is gone.
+  console.log("\n\x1b[33m[build]\x1b[0m Generating sw-precache.json...");
+  const assetGlob = new Bun.Glob("**/*");
+  const assetEntries: string[] = [];
+  for await (const file of assetGlob.scan(join(DIST_DIR, "assets"))) {
+    if (file.endsWith(".map")) continue;
+    assetEntries.push(prefix(`/assets/${file}`));
+  }
+
+  const pipelineEmEntries: string[] = [];
+  const pipelineEmDir = join(DIST_DIR, "pipeline-em");
+  try {
+    for await (const file of assetGlob.scan(pipelineEmDir)) {
+      pipelineEmEntries.push(prefix(`/pipeline-em/${file}`));
+    }
+  } catch {
+    // pipeline-em not present (build script wasn't run yet) — SW will still
+    // work, but the WASM pipeline won't load offline. Surface a warning.
+    console.log(
+      "  \x1b[31m✗\x1b[0m pipeline-em/ missing — run scripts/build-wasm-emscripten.sh first",
+    );
+  }
+
+  const precache = {
+    version: 2,
+    basePath: BASE_PATH,
+    shellAssets: [
+      prefix("/"),
+      prefix("/index.html"),
+      prefix("/manifest.json"),
+      prefix("/config.js"),
+      prefix("/offline.html"),
+    ],
+    appAssets: assetEntries,
+    pipelineAssets: pipelineEmEntries,
+  };
+  await Bun.write(
+    join(DIST_DIR, "sw-precache.json"),
+    JSON.stringify(precache, null, 2),
+  );
+  console.log(
+    `  \x1b[32m✓\x1b[0m sw-precache.json (${
+      precache.shellAssets.length + precache.appAssets.length + precache.pipelineAssets.length
+    } urls)`,
+  );
 
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
   console.log("\n\x1b[32m[build]\x1b[0m Build completed in " + elapsed + "s");

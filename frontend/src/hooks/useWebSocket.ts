@@ -27,7 +27,7 @@ const MAX_RECONNECT_DELAY = 30_000;
 
 // Reactive connection state — avoids polling in consumers
 let _connected = false;
-let _connectionListeners = new Set<() => void>();
+const _connectionListeners = new Set<() => void>();
 function _setConnected(v: boolean) {
   if (_connected !== v) {
     _connected = v;

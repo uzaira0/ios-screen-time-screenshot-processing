@@ -1,5 +1,8 @@
-// App version injected by Vite define at build time (from package.json)
+// App version injected by Vite/Bun define at build time (from package.json).
+// Commit SHA injected by the GitHub Pages workflow (or `git rev-parse` for
+// local builds). Both default to "dev" when missing.
 declare const __APP_VERSION__: string;
+declare const __COMMIT_SHA__: string;
 
 // Runtime configuration injected by docker-entrypoint.sh via config.js
 declare global {
@@ -51,5 +54,8 @@ export const config = {
   },
   get appVersion(): string {
     return typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
+  },
+  get commitSha(): string {
+    return typeof __COMMIT_SHA__ !== "undefined" ? __COMMIT_SHA__ : "dev";
   },
 };

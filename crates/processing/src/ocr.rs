@@ -295,6 +295,17 @@ pub struct OcrWord {
     pub h: i32,
 }
 
+/// PHI-detection OCR word — like `OcrWord` but carries Tesseract's
+/// per-word confidence (0–100).
+pub struct PhiWord {
+    pub text: String,
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub conf: i32,
+}
+
 /// Run Tesseract on an image and return word-level results.
 ///
 /// Uses `set_image_from_mem` to avoid temp file I/O entirely.
@@ -343,6 +354,52 @@ pub fn parse_tsv_words(lt: &mut leptess::LepTess) -> Result<Vec<OcrWord>, Proces
     }
 
     Ok(words)
+}
+
+/// Run full-page Tesseract OCR for PHI detection — returns every word with
+/// bbox + confidence, no character whitelist.
+///
+/// Used by the WASM PHI pipeline to replace Tesseract.js. The thread-local
+/// LepTess instance is shared with `run_tesseract`; this function explicitly
+/// clears the digit whitelist so subsequent digit-only calls must re-set it
+/// (which `run_tesseract` already does).
+#[cfg(feature = "ocr")]
+pub fn run_phi_ocr_words(img: &RgbImage) -> Result<Vec<PhiWord>, ProcessingError> {
+    let mut png_buf = Vec::new();
+    let encoder = image::codecs::png::PngEncoder::new(&mut png_buf);
+    img.write_with_encoder(encoder)
+        .map_err(|e| ProcessingError::Ocr(format!("PNG encode failed: {e}")))?;
+
+    with_leptess("3", |lt| {
+        // Clear any whitelist a previous digit-only call left behind.
+        lt.set_variable(leptess::Variable::TesseditCharWhitelist, "")
+            .ok();
+        lt.set_image_from_mem(&png_buf)
+            .map_err(|e| ProcessingError::Ocr(format!("Set image from mem failed: {e}")))?;
+        lt.recognize();
+        let tsv = lt.get_tsv_text(0).unwrap_or_default();
+
+        let mut words = Vec::new();
+        for line in tsv.lines().skip(1) {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() < 12 {
+                continue;
+            }
+            let text = parts[11].trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            words.push(PhiWord {
+                text,
+                x: parts[6].parse().unwrap_or(0),
+                y: parts[7].parse().unwrap_or(0),
+                w: parts[8].parse().unwrap_or(0),
+                h: parts[9].parse().unwrap_or(0),
+                conf: parts[10].parse().unwrap_or(0),
+            });
+        }
+        Ok(words)
+    })
 }
 
 /// Sort OCR words in reading order (left-to-right, top-to-bottom).

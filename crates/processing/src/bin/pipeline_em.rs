@@ -321,6 +321,81 @@ pub extern "C" fn pipeline_extract_ocr(
     write_json(&json, out, out_len)
 }
 
+/// Full-page OCR for PHI detection. Returns every word with bbox +
+/// confidence + character offsets so the JS side can map matches back to
+/// image coordinates. Replaces the Tesseract.js dependency.
+#[no_mangle]
+pub extern "C" fn pipeline_phi_words(
+    rgba_ptr: *const u8,
+    rgba_len: usize,
+    width: u32,
+    height: u32,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    ensure_tessdata_prefix();
+    let rgba = unsafe { slice::from_raw_parts(rgba_ptr, rgba_len) };
+
+    let Some(img) = rgba_to_rgb(rgba, width, height) else {
+        return write_json(&json_err("RGBA size mismatch"), out, out_len);
+    };
+
+    #[cfg(feature = "ocr")]
+    let json = match ocr::run_phi_ocr_words(&img) {
+        Ok(phi_words) => {
+            let mut full_text = String::new();
+            let mut total_conf: i64 = 0;
+            let mut counted = 0i64;
+
+            let words: Vec<serde_json::Value> = phi_words
+                .iter()
+                .map(|w| {
+                    let char_start = full_text.chars().count();
+                    full_text.push_str(&w.text);
+                    let char_end = full_text.chars().count();
+                    full_text.push(' ');
+
+                    if w.conf >= 0 {
+                        total_conf += w.conf as i64;
+                        counted += 1;
+                    }
+
+                    serde_json::json!({
+                        "text": w.text,
+                        "x": w.x,
+                        "y": w.y,
+                        "w": w.w,
+                        "h": w.h,
+                        "conf": w.conf,
+                        "char_start": char_start,
+                        "char_end": char_end,
+                    })
+                })
+                .collect();
+
+            let avg_conf = if counted > 0 {
+                total_conf as f64 / counted as f64
+            } else {
+                0.0
+            };
+
+            serde_json::json!({
+                "success": true,
+                "words": words,
+                "full_text": full_text.trim_end(),
+                "avg_confidence": avg_conf,
+            })
+            .to_string()
+        }
+        Err(e) => json_err(&format!("OCR: {e}")),
+    };
+    #[cfg(not(feature = "ocr"))]
+    let json = json_err("PHI OCR not available: ocr feature disabled");
+    let _ = img; // silence unused on no-ocr builds
+
+    write_json(&json, out, out_len)
+}
+
 fn main() {
     // Force-reference each C-ABI export so rustc doesn't dead-code-eliminate
     // them before wasm-ld sees the bin's object. emcc's --export-table /
@@ -332,4 +407,5 @@ fn main() {
     std::hint::black_box(pipeline_process as *const ());
     std::hint::black_box(pipeline_detect_grid as *const ());
     std::hint::black_box(pipeline_extract_ocr as *const ());
+    std::hint::black_box(pipeline_phi_words as *const ());
 }
