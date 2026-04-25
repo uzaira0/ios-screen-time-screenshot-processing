@@ -21,6 +21,7 @@
     "test:e2e:report": "bunx playwright show-report",
     "test:e2e:wasm": "bunx playwright test --config playwright.wasm.config.ts",
     "test:e2e:stress": "bunx playwright test --config playwright.wasm-stress.config.ts",
+    "test:e2e:annotate": "bunx playwright test --config playwright.wasm-annotate.config.ts",
     "test:a11y": "bunx playwright test tests/accessibility/",
     "check-drift": "./scripts/check-contract-drift.sh",
     "size-check": "bun run build && bunx size-limit",
