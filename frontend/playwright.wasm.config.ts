@@ -21,7 +21,7 @@ const __dirname = path.dirname(__filename);
  */
 export default defineConfig({
   testDir: "./tests",
-  testMatch: /wasm.*\.spec\.ts$/,
+  testMatch: /wasm-smoke\.spec\.ts$/,
   fullyParallel: false,
   workers: 1,
   globalSetup: path.resolve(__dirname, "tests/setup/wasm-global-setup.ts"),

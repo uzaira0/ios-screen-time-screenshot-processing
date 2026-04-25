@@ -688,7 +688,12 @@ test.describe("WASM Error Resilience", () => {
           !text.includes("manifest") &&
           !text.includes("sw.js") &&
           !text.includes("service-worker") &&
-          !text.includes("Worker error")
+          !text.includes("Worker error") &&
+          // Transient: when the test rapidly navigates after a state-reset
+          // login, a child component can render once before the new container
+          // is provided. ErrorBoundary catches it and the next render succeeds.
+          // Same exclusion as the Full Workflow test below.
+          !text.includes("Service not registered")
         ) {
           errors.push(text);
         }

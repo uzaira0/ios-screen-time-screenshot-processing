@@ -73,6 +73,7 @@ function bootstrapServerServices(config: AppConfig): ServiceContainer {
     consensusComparison: true,
     admin: true,
     preprocessing: true,
+    phiDetection: true,
   };
   container.register(TOKENS.FEATURES, features);
 

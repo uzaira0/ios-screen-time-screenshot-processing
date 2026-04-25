@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState, useRef } from "react";
+import React, { useEffect, useCallback, useState, useRef } from "react";
 import { useSearchParams, Link } from "react-router";
 import { Layout } from "@/components/layout/Layout";
 import { usePreprocessingStore } from "@/hooks/usePreprocessingWithDI";
@@ -7,14 +7,29 @@ import { PreprocessingWizard } from "@/components/preprocessing/PreprocessingWiz
 import { StageSummaryBar } from "@/components/preprocessing/StageSummaryBar";
 import { DeviceDetectionTab } from "@/components/preprocessing/DeviceDetectionTab";
 import { CroppingTab } from "@/components/preprocessing/CroppingTab";
-import { PHIDetectionTab } from "@/components/preprocessing/PHIDetectionTab";
-import { PHIRedactionTab } from "@/components/preprocessing/PHIRedactionTab";
 import { OCRTab } from "@/components/preprocessing/OCRTab";
 import { EventLogPanel } from "@/components/preprocessing/EventLogPanel";
 import { PreprocessingQueueView } from "@/components/preprocessing/PreprocessingQueueView";
-import { usePreprocessingPipelineService } from "@/core";
-import { PREPROCESSING_STAGES } from "@/core/generated/constants";
+import { usePreprocessingPipelineService, useActiveStages } from "@/core";
 import { KeyboardShortcutsModal, useKeyboardShortcutsModal } from "@/components/preprocessing/KeyboardShortcutsModal";
+
+// PHI tabs are lazy-loaded so the WASM bundle (which sets phiDetection: false)
+// drops their code path entirely when the user never reaches an active PHI tab.
+const PHIDetectionTab = React.lazy(() =>
+  import("@/components/preprocessing/PHIDetectionTab").then((m) => ({
+    default: m.PHIDetectionTab,
+  })),
+);
+const PHIRedactionTab = React.lazy(() =>
+  import("@/components/preprocessing/PHIRedactionTab").then((m) => ({
+    default: m.PHIRedactionTab,
+  })),
+);
+const PHITabFallback = (
+  <div className="flex items-center justify-center py-12">
+    <span className="inline-block w-6 h-6 border-2 border-slate-300 border-t-primary-600 rounded-full animate-spin" />
+  </div>
+);
 
 // ---------------------------------------------------------------------------
 // LLM Controls — endpoint, model dropdown + manual entry, API key, status
@@ -207,6 +222,7 @@ export const PreprocessingPage = () => {
   const setReturnUrl = usePreprocessingStore((s) => s.setReturnUrl);
   const returnUrl = usePreprocessingStore((s) => s.returnUrl);
   const queueMode = usePreprocessingStore((s) => s.queueMode);
+  const activeStages = useActiveStages();
   const shortcutsModal = useKeyboardShortcutsModal();
   const [shortcutsHintDismissed, setShortcutsHintDismissed] = useState(() => {
     try { return localStorage.getItem("shortcuts-hint-dismissed") === "1"; } catch { return false; }
@@ -218,7 +234,13 @@ export const PreprocessingPage = () => {
     return () => stopPolling();
   }, [loadGroups, stopPolling]);
 
-  const VALID_STAGES: readonly string[] = PREPROCESSING_STAGES;
+  // Deep-link stages must validate against the *active* list — PHI deep-links
+  // are inert in WASM mode where phiDetection is off.
+  const isValidStage = useCallback(
+    (s: string | null): s is Stage =>
+      !!s && (activeStages as readonly string[]).includes(s),
+    [activeStages],
+  );
 
   // Restore state from URL params on mount
   useEffect(() => {
@@ -230,8 +252,8 @@ export const PreprocessingPage = () => {
     if (returnUrlParam) {
       setReturnUrl(returnUrlParam);
     }
-    if (stageParam && VALID_STAGES.includes(stageParam)) {
-      setActiveStage(stageParam as Stage);
+    if (isValidStage(stageParam)) {
+      setActiveStage(stageParam);
     }
     if (groupParam) {
       setSelectedGroupId(groupParam);
@@ -246,14 +268,14 @@ export const PreprocessingPage = () => {
           }
           setHighlightedScreenshotId(id);
 
-          if (stageParam && VALID_STAGES.includes(stageParam)) {
-            setActiveStage(stageParam as Stage);
+          if (isValidStage(stageParam)) {
+            setActiveStage(stageParam);
           } else {
             const pp = (screenshot?.processing_metadata as Record<string, unknown>)?.preprocessing as Record<string, unknown> | undefined;
             const stageStatus = pp?.stage_status as Record<string, string> | undefined;
             if (stageStatus) {
-              const stageOrder = ["device_detection", "cropping", "phi_detection", "phi_redaction"] as const;
-              for (const s of stageOrder) {
+              for (const s of activeStages) {
+                if (s === "ocr") continue; // skip OCR — not a "needs review" target
                 if (stageStatus[s] === "invalidated" || stageStatus[s] === "pending" || stageStatus[s] === "failed") {
                   setActiveStage(s);
                   break;
@@ -414,12 +436,28 @@ export const PreprocessingPage = () => {
               </div>
             ) : (
               <>
-                {/* Keep tabs mounted but hidden to preserve scroll/sort state and avoid remount cost */}
-                <div className={activeStage === "device_detection" ? "" : "hidden"}><DeviceDetectionTab /></div>
-                <div className={activeStage === "cropping" ? "" : "hidden"}><CroppingTab /></div>
-                <div className={activeStage === "phi_detection" ? "" : "hidden"}><PHIDetectionTab /></div>
-                <div className={activeStage === "phi_redaction" ? "" : "hidden"}><PHIRedactionTab /></div>
-                <div className={activeStage === "ocr" ? "" : "hidden"}><OCRTab /></div>
+                {/* Keep tabs mounted but hidden to preserve scroll/sort state and avoid remount cost.
+                    PHI tabs are gated by activeStages — when phiDetection is off, the lazy
+                    chunks are never imported and these subtrees never render. */}
+                {activeStages.includes("device_detection") && (
+                  <div className={activeStage === "device_detection" ? "" : "hidden"}><DeviceDetectionTab /></div>
+                )}
+                {activeStages.includes("cropping") && (
+                  <div className={activeStage === "cropping" ? "" : "hidden"}><CroppingTab /></div>
+                )}
+                {activeStages.includes("phi_detection") && (
+                  <div className={activeStage === "phi_detection" ? "" : "hidden"}>
+                    <React.Suspense fallback={PHITabFallback}><PHIDetectionTab /></React.Suspense>
+                  </div>
+                )}
+                {activeStages.includes("phi_redaction") && (
+                  <div className={activeStage === "phi_redaction" ? "" : "hidden"}>
+                    <React.Suspense fallback={PHITabFallback}><PHIRedactionTab /></React.Suspense>
+                  </div>
+                )}
+                {activeStages.includes("ocr") && (
+                  <div className={activeStage === "ocr" ? "" : "hidden"}><OCRTab /></div>
+                )}
               </>
             )}
           </div>

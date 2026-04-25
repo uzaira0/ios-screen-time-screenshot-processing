@@ -1,5 +1,6 @@
+import { useEffect } from "react";
 import { usePreprocessingStore } from "@/hooks/usePreprocessingWithDI";
-import { STAGES } from "@/store/preprocessingStore";
+import { useActiveStages } from "@/core/hooks/useServices";
 import type { Stage } from "@/store/preprocessingStore";
 
 const STAGE_LABELS: Record<Stage, string> = {
@@ -10,24 +11,25 @@ const STAGE_LABELS: Record<Stage, string> = {
   ocr: "OCR",
 };
 
-const STAGE_NUMBERS: Record<Stage, number> = {
-  device_detection: 1,
-  cropping: 2,
-  phi_detection: 3,
-  phi_redaction: 4,
-  ocr: 5,
-};
-
 export const PreprocessingWizard = () => {
+  const activeStages = useActiveStages();
   const activeStage = usePreprocessingStore((s) => s.activeStage);
   const setActiveStage = usePreprocessingStore((s) => s.setActiveStage);
   const summary = usePreprocessingStore((s) => s.summary);
   const screenshots = usePreprocessingStore((s) => s.screenshots);
   const getStageStatus = usePreprocessingStore((s) => s.getStageStatus);
 
+  // If the current activeStage was removed from the list (e.g. PHI off), snap
+  // back to the first active stage so the wizard never points at a hidden tab.
+  useEffect(() => {
+    if (!activeStages.includes(activeStage)) {
+      setActiveStage(activeStages[0]!);
+    }
+  }, [activeStages, activeStage, setActiveStage]);
+
   return (
     <div className="flex border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
-      {STAGES.map((stage, idx) => {
+      {activeStages.map((stage, idx) => {
         const isActive = activeStage === stage;
         const counts = summary
           ? summary[stage]
@@ -37,6 +39,7 @@ export const PreprocessingWizard = () => {
         return (
           <button
             key={stage}
+            data-testid={`wizard-tab-${stage}`}
             onClick={() => setActiveStage(stage)}
             className={`flex-1 relative px-4 py-3 text-left transition-colors ${
               isActive
@@ -54,9 +57,7 @@ export const PreprocessingWizard = () => {
                       : "bg-slate-300 text-slate-600 dark:bg-slate-600 dark:text-slate-300"
                 }`}
               >
-                {counts.completed === total && total > 0
-                  ? "\u2713"
-                  : STAGE_NUMBERS[stage]}
+                {counts.completed === total && total > 0 ? "\u2713" : idx + 1}
               </span>
               <span
                 className={`text-sm font-medium ${
@@ -99,7 +100,7 @@ export const PreprocessingWizard = () => {
               )}
             </div>
             {/* Connector line between steps */}
-            {idx < STAGES.length - 1 && (
+            {idx < activeStages.length - 1 && (
               <div className="absolute right-0 top-1/2 -translate-y-1/2 w-0 h-0 border-t-[6px] border-t-transparent border-b-[6px] border-b-transparent border-l-[6px] border-l-slate-200 dark:border-l-slate-700 translate-x-[6px] z-10" />
             )}
           </button>

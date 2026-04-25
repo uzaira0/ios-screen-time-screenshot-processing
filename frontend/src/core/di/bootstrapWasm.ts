@@ -50,21 +50,27 @@ export function bootstrapWasmServices(_config: AppConfig): ServiceContainer {
     return new WASMConsensusService(storage);
   });
 
-  container.registerSingleton(TOKENS.PREPROCESSING_PIPELINE_SERVICE, () => {
-    const storage = container.resolve<IndexedDBStorageService>(TOKENS.STORAGE_SERVICE);
-    const processing = container.resolve<WASMProcessingService>(TOKENS.PROCESSING_SERVICE);
-    return new WASMPreprocessingService(storage, processing);
-  });
-
-  // WASM mode: local processing via Tesseract.js + IndexedDB.
+  // WASM mode: local processing via Rust+leptess WASM + IndexedDB.
   // Server-only features: cross-rater comparison, admin.
+  // PHI detection is disabled in pure-browser WASM mode — the pipeline is
+  // device detection → cropping → OCR. Tauri overrides this back to true.
   const features: AppFeatures = {
     groups: true,
     consensusComparison: false,
     admin: false,
     preprocessing: true,
+    phiDetection: false,
   };
   container.register(TOKENS.FEATURES, features);
+
+  container.registerSingleton(TOKENS.PREPROCESSING_PIPELINE_SERVICE, () => {
+    const storage = container.resolve<IndexedDBStorageService>(TOKENS.STORAGE_SERVICE);
+    const processing = container.resolve<WASMProcessingService>(TOKENS.PROCESSING_SERVICE);
+    const f = container.resolve<AppFeatures>(TOKENS.FEATURES);
+    return new WASMPreprocessingService(storage, processing, {
+      enablePhi: f.phiDetection,
+    });
+  });
 
   if (runtimeConfig.isDev) {
     console.log("[Bootstrap] WASM services registered.");

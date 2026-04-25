@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useEffect, useRef, useState, createElement, type ReactNode } from "react";
-import { usePreprocessingPipelineService } from "@/core";
+import { usePreprocessingPipelineService, useActiveStages } from "@/core";
 import { createPreprocessingStore, type PreprocessingState } from "@/store/preprocessingStore";
 import type { IPreprocessingService } from "@/core/interfaces/IPreprocessingService";
 import { config } from "@/config";
@@ -23,11 +23,13 @@ const PreprocessingStoreContext = createContext<PreprocessingStore | null>(null)
  */
 export function PreprocessingProvider({ children }: { children: ReactNode }) {
   const service = usePreprocessingPipelineService();
+  const activeStages = useActiveStages();
   const cacheKeyRef = useRef<string | null>(null);
 
   const store = useMemo(() => {
-    // Use a stable key — in practice there's one preprocessing service per mode
-    const cacheKey = "preprocessing";
+    // Use a stable key — in practice there's one preprocessing service per mode.
+    // Differentiate by active-stage signature so a mode change rebuilds the store.
+    const cacheKey = `preprocessing:${activeStages.join(",")}`;
     cacheKeyRef.current = cacheKey;
 
     const existing = storeInstances.get(cacheKey);
@@ -36,10 +38,10 @@ export function PreprocessingProvider({ children }: { children: ReactNode }) {
       return existing.store;
     }
 
-    const newStore = createPreprocessingStore(service);
+    const newStore = createPreprocessingStore(service, activeStages);
     storeInstances.set(cacheKey, { store: newStore, refCount: 1 });
     return newStore;
-  }, [service]);
+  }, [service, activeStages]);
 
   // Cleanup on unmount: stop polling immediately, then clean up store after delay
   useEffect(() => {

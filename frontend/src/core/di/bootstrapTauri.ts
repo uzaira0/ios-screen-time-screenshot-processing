@@ -1,4 +1,4 @@
-import { TOKENS } from "./tokens";
+import { TOKENS, type AppFeatures } from "./tokens";
 import type { AppConfig } from "../config";
 import type { ServiceContainer } from "./Container";
 import { bootstrapWasmServices } from "./bootstrapWasm";
@@ -8,7 +8,9 @@ import { TauriProcessingService } from "../implementations/tauri/TauriProcessing
  * Bootstrap services for Tauri (desktop) mode.
  *
  * Reuses WASM bootstrap for storage/annotations/consensus, but swaps in
- * TauriProcessingService (Rust-native) instead of WASMProcessingService (Tesseract.js).
+ * TauriProcessingService (Rust-native) instead of WASMProcessingService.
+ * Tauri ships native leptess so PHI detection stays available — re-enable
+ * the flag that the WASM bootstrap turned off.
  */
 export function bootstrapTauriServices(config: AppConfig): ServiceContainer {
   const container = bootstrapWasmServices(config);
@@ -18,6 +20,10 @@ export function bootstrapTauriServices(config: AppConfig): ServiceContainer {
     TOKENS.PROCESSING_SERVICE,
     () => new TauriProcessingService(),
   );
+
+  // Tauri has native leptess + libtesseract — turn PHI back on.
+  const wasmFeatures = container.resolve<AppFeatures>(TOKENS.FEATURES);
+  container.register(TOKENS.FEATURES, { ...wasmFeatures, phiDetection: true });
 
   return container;
 }

@@ -165,8 +165,15 @@ interface PreprocessingState {
 /**
  * Factory function to create a preprocessing store with an injected service.
  * Server mode passes ServerPreprocessingService, WASM mode passes WASMPreprocessingService.
+ *
+ * `activeStages` controls which stages are eligible for prereq computation,
+ * running-stage detection, and downstream invalidation. WASM mode passes the
+ * 3-stage list (PHI removed); server/Tauri pass the full 5-stage list.
  */
-export function createPreprocessingStore(service: IPreprocessingService) {
+export function createPreprocessingStore(
+  service: IPreprocessingService,
+  activeStages: readonly Stage[] = STAGES,
+) {
   // Per-instance abort flag for upload cancellation (not module-level to avoid cross-store leaks)
   let _uploadCancelled = false;
   // One-shot guard: reconcile stuck stages on first loadSummary in WASM mode
@@ -178,7 +185,7 @@ export function createPreprocessingStore(service: IPreprocessingService) {
   selectedGroupId: "",
   groups: [],
   summary: null,
-  activeStage: "device_detection",
+  activeStage: activeStages[0] ?? "device_detection",
   pageMode: "pipeline",
   isRunningStage: false,
   stageProgress: null,
@@ -197,7 +204,7 @@ export function createPreprocessingStore(service: IPreprocessingService) {
   _queuedCount: 0,
   _completedBaseline: 0,
   _abortController: null,
-  _pollStage: "device_detection",
+  _pollStage: activeStages[0] ?? "device_detection",
   _pendingTaskIds: [],
 
   // Upload state
@@ -349,13 +356,14 @@ export function createPreprocessingStore(service: IPreprocessingService) {
       if (data) {
         set({ summary: data });
 
-        // Auto-detect running tasks across ALL stages and reconnect polling.
-        // Must check all stages, not just activeStage — after a page refresh
-        // the store resets to activeStage="device_detection" even if a different
-        // stage (e.g. phi_detection) is actively running on workflow workers.
+        // Auto-detect running tasks across active stages and reconnect polling.
+        // Must check all active stages, not just activeStage — after a page refresh
+        // the store resets to the first stage even if a different stage is
+        // actively running on workflow workers. Inactive stages can never be
+        // running so we skip them here for free.
         const alreadyPolling = get()._pollInterval !== null;
         if (!alreadyPolling) {
-          const runningStage = STAGES.find((s) => (data[s]?.running ?? 0) > 0);
+          const runningStage = activeStages.find((s) => (data[s]?.running ?? 0) > 0);
           if (runningStage) {
             const runningSummary = data[runningStage]!;
             set({
@@ -869,8 +877,10 @@ export function createPreprocessingStore(service: IPreprocessingService) {
 
   getEligibleCount: (stage) => {
     const { screenshots } = get();
-    const stageIdx = STAGES.indexOf(stage);
-    const prereqs = STAGES.slice(0, stageIdx);
+    // Prereqs come from the active stage list — inactive stages (e.g. PHI in
+    // WASM mode) sit PENDING forever and would otherwise wedge OCR's count.
+    const stageIdx = activeStages.indexOf(stage);
+    const prereqs = stageIdx >= 0 ? activeStages.slice(0, stageIdx) : [];
     let eligible = 0;
     let blockedByPrereq = 0;
     for (const s of screenshots) {
