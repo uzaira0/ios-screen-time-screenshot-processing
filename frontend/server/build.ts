@@ -59,7 +59,24 @@ async function build() {
   console.log("\x1b[33m[build]\x1b[0m Bundling JavaScript...");
 
   const result = await Bun.build({
-    entrypoints: [join(SRC_DIR, "main.tsx")],
+    // Multi-entrypoint: bundle main.tsx AND every Web Worker module separately
+    // so `new Worker(new URL("./foo.ts", import.meta.url))` callers can load
+    // them at runtime. Bun's bundler does not auto-detect those URL patterns
+    // (it leaves the literal .ts path in the bundle, which 404s in dist).
+    // Listing each worker file explicitly emits a hashed JS chunk that the
+    // browser can load.
+    entrypoints: [
+      join(SRC_DIR, "main.tsx"),
+      join(
+        SRC_DIR,
+        "core/implementations/wasm/processing/workers/imageProcessor.worker.emscripten.ts",
+      ),
+      // NER worker for PHI detection — separately code-split.
+      join(
+        SRC_DIR,
+        "core/implementations/wasm/preprocessing/nerWorker.ts",
+      ),
+    ],
     outdir: join(DIST_DIR, "assets"),
     target: "browser",
     format: "esm",
@@ -85,6 +102,50 @@ async function build() {
       console.error(log);
     }
     process.exit(1);
+  }
+
+  // Map each worker source path → its hashed output filename, then rewrite
+  // every `new URL("./worker.ts", import.meta.url)` literal in the bundled JS
+  // to point at the real built chunk. Without this, the runtime fetches a
+  // non-existent .ts URL.
+  const workerOutputMap = new Map<string, string>();
+  for (const output of result.outputs) {
+    const name = output.path.split(/[/\\]/).pop() || "";
+    if (name.startsWith("imageProcessor.worker.emscripten") && name.endsWith(".js")) {
+      workerOutputMap.set("imageProcessor.worker.emscripten.ts", `./${name}`);
+    } else if (name.startsWith("nerWorker") && name.endsWith(".js")) {
+      workerOutputMap.set("nerWorker.ts", `./${name}`);
+    }
+  }
+  if (workerOutputMap.size > 0) {
+    for (const output of result.outputs) {
+      const name = output.path.split(/[/\\]/).pop() || "";
+      if (!name.endsWith(".js") || name.endsWith(".map")) continue;
+      const filePath = output.path;
+      let text = await Bun.file(filePath).text();
+      let changed = false;
+      for (const [src, hashed] of workerOutputMap) {
+        // Match: new URL("…/imageProcessor.worker.emscripten.ts", import.meta.url)
+        // Replace the path arg with the hashed sibling chunk URL. Bun emits
+        // both the worker chunk and the main chunk into the same /assets/ dir,
+        // so a relative ./file.js works from either.
+        const pattern = new RegExp(
+          `(new URL\\(\\s*["'])([^"']*?)(${src.replace(/\./g, "\\.")})(["'])`,
+          "g",
+        );
+        const next = text.replace(pattern, `$1${hashed}$4`);
+        if (next !== text) {
+          text = next;
+          changed = true;
+        }
+      }
+      if (changed) {
+        await Bun.write(filePath, text);
+        console.log(
+          `  \x1b[32m✓\x1b[0m worker URL rewrite in ${output.path.split(/[/\\]/).pop()}`,
+        );
+      }
+    }
   }
 
   // Get the main bundle filename

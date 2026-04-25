@@ -166,9 +166,14 @@ test.describe("WASM Navigation", () => {
     await expect(page).toHaveURL(/\/annotate/);
   });
 
-  test("navigates to Consensus page", async ({ page }) => {
-    await page.getByRole("link", { name: "Consensus" }).click();
-    await expect(page).toHaveURL(/\/consensus/);
+  test("/consensus redirects to / in WASM mode (server-only feature)", async ({
+    page,
+  }) => {
+    // AppRouter gates /consensus on features.consensusComparison, which
+    // bootstrapWasm sets to false (single-rater workflows have no
+    // cross-rater comparison to render). The route redirects to home.
+    await page.goto("/consensus");
+    await expect(page).toHaveURL(/127\.0\.0\.1:9091\/?$/);
   });
 
   test("navigates to Settings page", async ({ page }) => {
@@ -328,40 +333,40 @@ test.describe("WASM Preprocessing Page", () => {
     await wasmLogin(page);
   });
 
-  test("shows stats cards", async ({ page }) => {
-    await page.goto("/preprocessing");
-    await expect(page.getByText("Total", { exact: true })).toBeVisible();
-    await expect(page.getByText("Pending", { exact: true })).toBeVisible();
-    await expect(page.getByText("Processed", { exact: true })).toBeVisible();
-    await expect(page.getByText("Failed", { exact: true })).toBeVisible();
-  });
-
-  test("shows page heading", async ({ page }) => {
+  test("shows pipeline heading", async ({ page }) => {
     await page.goto("/preprocessing");
     await expect(
-      page.getByRole("heading", { name: /preprocessing/i }),
+      page.getByRole("heading", { name: /preprocessing pipeline/i }),
     ).toBeVisible();
   });
 
-  test("refresh button exists and is enabled", async ({ page }) => {
+  test("shows wizard stage tabs", async ({ page }) => {
     await page.goto("/preprocessing");
+    // Wait for React to mount + the wizard heading to render before checking
+    // for stage descriptions.
     await expect(
-      page.getByRole("button", { name: /refresh/i }),
-    ).toBeEnabled();
+      page.getByRole("heading", { name: /preprocessing pipeline/i }),
+    ).toBeVisible({ timeout: 10_000 });
+    const body = await page.textContent("body");
+    expect(body).toMatch(
+      /Identifies device type|Removes iPad sidebar|Detects personal information|Blacks out detected|Extracts app title/,
+    );
   });
 
-  test("shows empty state when no screenshots", async ({ page }) => {
-    await clearAllState(page);
-    await wasmLogin(page);
+  test("Group selector exists", async ({ page }) => {
     await page.goto("/preprocessing");
-    await expect(
-      page.getByText(/no screenshots loaded/i),
-    ).toBeVisible();
+    await expect(page.getByText(/group:/i).first()).toBeVisible();
   });
 
-  test("shows pending count after uploading screenshots", async ({
-    page,
-  }) => {
+  test("shows screenshot count footer", async ({ page }) => {
+    await page.goto("/preprocessing");
+    await page.waitForTimeout(1000);
+    // Footer renders `<n> screenshots in <group>`. With no upload, n=0.
+    const body = await page.textContent("body");
+    expect(body).toMatch(/\d+ screenshots? in/);
+  });
+
+  test("populates after uploading screenshots", async ({ page }) => {
     await clearAllState(page);
     await wasmLogin(page);
     await uploadFixtures(page);
@@ -369,24 +374,9 @@ test.describe("WASM Preprocessing Page", () => {
     await page.goto("/preprocessing");
     await page.waitForTimeout(2000);
 
-    // Pending count should be > 0 (amber colored number)
-    const pendingCard = page
-      .locator(".text-amber-600")
-      .or(page.getByText(/[1-9]/));
-    await expect(pendingCard.first()).toBeVisible();
-  });
-
-  test("process button shows pending count", async ({ page }) => {
-    await clearAllState(page);
-    await wasmLogin(page);
-    await uploadFixtures(page);
-
-    await page.goto("/preprocessing");
-    await page.waitForTimeout(2000);
-
-    await expect(
-      page.getByRole("button", { name: /process.*pending/i }),
-    ).toBeEnabled();
+    const body = await page.textContent("body");
+    // After uploading 4 fixtures, the footer should reflect that count.
+    expect(body).toMatch(/[1-9]\d*\s+screenshots?\s+in/);
   });
 });
 
@@ -752,10 +742,15 @@ test.describe("WASM Full Workflow", () => {
     // Step 2: Upload screenshots on home page
     await uploadFixtures(page);
 
-    // Step 3: Navigate to preprocessing — should show pending
+    // Step 3: Navigate to preprocessing — should show the wizard heading and
+    // a footer with the uploaded screenshot count.
     await page.goto("/preprocessing");
     await page.waitForTimeout(2000);
-    await expect(page.getByText("Pending", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /preprocessing pipeline/i }),
+    ).toBeVisible();
+    const preprocessBody = await page.textContent("body");
+    expect(preprocessBody).toMatch(/[1-9]\d*\s+screenshots?\s+in/);
 
     // Step 4: Navigate to annotate — should have data
     await page.goto("/annotate");

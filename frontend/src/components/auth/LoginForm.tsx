@@ -153,7 +153,6 @@ export const LoginForm = () => {
                   required={!config.isLocalMode}
                   minLength={3}
                   maxLength={50}
-                  pattern="[a-zA-Z0-9_-]{3,50}"
                   title="3-50 characters: letters, numbers, hyphens, underscores"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
