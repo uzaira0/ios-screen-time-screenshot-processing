@@ -420,25 +420,11 @@ npx pwa-asset-generator logo.svg ./public/icons
 
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment guides:
 
-- Netlify
-- Vercel
 - GitHub Pages
 - Docker
 - Self-hosting
 
 ### Quick Deploy
-
-**Netlify:**
-```bash
-npm install -g netlify-cli
-netlify deploy --prod
-```
-
-**Vercel:**
-```bash
-npm install -g vercel
-vercel --prod
-```
 
 **Docker:**
 ```bash

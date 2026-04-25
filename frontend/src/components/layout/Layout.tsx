@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import { Header } from "./Header";
 import { UpdateBanner } from "./UpdateBanner";
+import { Footer } from "./Footer";
 
 interface LayoutProps {
   children: ReactNode;
@@ -18,6 +19,7 @@ export const Layout = ({ children, noScroll = false }: LayoutProps) => {
       >
         {children}
       </main>
+      <Footer />
     </div>
   );
 };

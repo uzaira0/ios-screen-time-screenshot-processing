@@ -6,7 +6,13 @@ license = "MIT OR Apache-2.0"
 description = "Bar graph extraction, grid detection, and OCR for iOS Screen Time screenshots — shared between Tauri desktop app and PyO3 Python extension"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+# rlib only. The pipeline_em.rs binary (src/bin/pipeline_em.rs) carries the
+# C-ABI exports for the wasm32-unknown-emscripten build; emitting a
+# competing cdylib of the lib here would make cargo link a parallel .wasm
+# without those exports and fail with `symbol exported via --export not
+# found: pipeline_alloc`. Downstream consumers (rust-python, src-tauri)
+# already link as rlib.
+crate-type = ["rlib"]
 
 # Cannot use workspace = true because the wasm-emscripten module requires
 # unsafe_code (C FFI with #[no_mangle] and raw pointer ops). Specify manually.

@@ -32,8 +32,14 @@ export class WASMProcessingService implements IProcessingService {
   }
 
   private initializeWorker(): void {
+    // Rust+leptess pipeline (wasm32-unknown-emscripten). The worker dynamically
+    // imports the Emscripten-compiled IosScreenTimePipeline.wasm produced by
+    // scripts/build-wasm-emscripten.sh and staged into
+    // frontend/public/pipeline-em/. Grid detection, OCR (leptess →
+    // libtesseract), bar extraction, and boundary optimization all run in
+    // Rust — no Tesseract.js, no TS canvas ports.
     this.worker = new Worker(
-      new URL("./processing/workers/imageProcessor.worker.canvas.ts", import.meta.url),
+      new URL("./processing/workers/imageProcessor.worker.emscripten.ts", import.meta.url),
       { type: "module" },
     );
 

@@ -1,6 +1,7 @@
-import { useContext } from "react";
+import { useContext, useMemo } from "react";
 import { ServiceContext } from "./ServiceProvider";
-import { TOKENS, type AppFeatures } from "../di/tokens";
+import { TOKENS, type AppFeatures, getActiveStages } from "../di/tokens";
+import type { PreprocessingStages } from "@/core/generated/constants";
 import type {
   IScreenshotService,
   IAnnotationService,
@@ -66,4 +67,17 @@ export function usePreprocessingPipelineService(): IPreprocessingService {
 export function useFeatures(): AppFeatures {
   const container = useServiceContainer();
   return container.resolve<AppFeatures>(TOKENS.FEATURES);
+}
+
+/**
+ * Ordered list of preprocessing stages active in the current mode.
+ * Use this — never the raw PREPROCESSING_STAGES constant — when computing
+ * prerequisites, rendering wizard tabs, or validating deep-links.
+ *
+ * In WASM mode this returns ["device_detection", "cropping", "ocr"].
+ * In server/Tauri mode it returns the full 5-stage list.
+ */
+export function useActiveStages(): readonly PreprocessingStages[] {
+  const features = useFeatures();
+  return useMemo(() => getActiveStages(features), [features]);
 }

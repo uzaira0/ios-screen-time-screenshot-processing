@@ -31,14 +31,24 @@ import type {
 } from "@/types";
 import { detectDevice } from "./deviceDetection";
 import { cropScreenshot } from "./cropping";
-import { detectPHI, terminateNERWorker, terminateTesseractWorker } from "./phiDetection";
-import { redactImage } from "./phiRedaction";
 import type { PHIRegion } from "@/core/interfaces/IPreprocessingService";
 import type { IProcessingService } from "@/core/interfaces/IProcessingService";
 import { createObjectURL as cachedCreateObjectURL } from "../storage/opfsBlobStorage";
 
 import { PREPROCESSING_STAGES, StageStatus as SS } from "@/core/generated/constants";
+import { PHI_STAGES } from "@/core/di/tokens";
 const STAGES: PreprocessingStage[] = [...PREPROCESSING_STAGES];
+
+// PHI modules are dynamic-imported only when the feature is enabled, so the
+// nerWorker chunk and phiDetection helpers stay tree-shakable in WASM-mode
+// builds where AppFeatures.phiDetection is false.
+type PhiModule = typeof import("./phiDetection");
+type PhiRedactModule = typeof import("./phiRedaction");
+
+export interface WASMPreprocessingOptions {
+  /** When false, runStage("phi_*") is a no-op and PHI helpers are never imported. */
+  enablePhi: boolean;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers to read/write preprocessing metadata on a screenshot
@@ -134,9 +144,51 @@ function normalizeEvents(events: PreprocessingEvent[]): PreprocessingEvent[] {
 export class WASMPreprocessingService implements IPreprocessingService {
   private storage: IndexedDBStorageService;
   private processing: IProcessingService;
-  constructor(storage: IndexedDBStorageService, processing: IProcessingService) {
+  private readonly enablePhi: boolean;
+  /** The stage list this service treats as active — drives prereqs, resets, invalidation. */
+  private readonly activeStages: readonly PreprocessingStage[];
+  private phiModulePromise: Promise<PhiModule> | null = null;
+  private phiRedactPromise: Promise<PhiRedactModule> | null = null;
+
+  constructor(
+    storage: IndexedDBStorageService,
+    processing: IProcessingService,
+    options: WASMPreprocessingOptions = { enablePhi: true },
+  ) {
     this.storage = storage;
     this.processing = processing;
+    this.enablePhi = options.enablePhi;
+    this.activeStages = options.enablePhi
+      ? STAGES
+      : STAGES.filter((s) => !PHI_STAGES.includes(s));
+  }
+
+  private loadPhiModule(): Promise<PhiModule> {
+    if (!this.phiModulePromise) {
+      this.phiModulePromise = import("./phiDetection");
+    }
+    return this.phiModulePromise;
+  }
+
+  private loadPhiRedactModule(): Promise<PhiRedactModule> {
+    if (!this.phiRedactPromise) {
+      this.phiRedactPromise = import("./phiRedaction");
+    }
+    return this.phiRedactPromise;
+  }
+
+  /** Prereq stages for a given target — the active stages that run before it. */
+  private prereqsFor(stage: PreprocessingStage): readonly PreprocessingStage[] {
+    const idx = this.activeStages.indexOf(stage);
+    if (idx < 0) return [];
+    return this.activeStages.slice(0, idx);
+  }
+
+  /** Downstream stages of a given target — the active stages from it onward. */
+  private downstreamFrom(stage: PreprocessingStage): readonly PreprocessingStage[] {
+    const idx = this.activeStages.indexOf(stage);
+    if (idx < 0) return [];
+    return this.activeStages.slice(idx);
   }
 
   async getStorageEstimate(): Promise<import("@/core/interfaces/IStorageService").StorageEstimate | null> {
@@ -171,9 +223,15 @@ export class WASMPreprocessingService implements IPreprocessingService {
     // Terminate the processing worker (kills any in-flight OCR/grid detection).
     // It will be lazily recreated on the next processImage/detectGrid call.
     this.processing.terminate();
-    // Also terminate PHI detection workers
-    terminateNERWorker();
-    terminateTesseractWorker();
+    // Also terminate PHI detection workers — but only if they were ever loaded.
+    if (this.phiModulePromise) {
+      this.phiModulePromise
+        .then((m) => {
+          m.terminateNERWorker();
+          m.terminateTesseractWorker();
+        })
+        .catch(() => { /* module never finished loading; nothing to terminate */ });
+    }
   }
 
   /** Record a failed event and return when the image blob is missing from storage. */
@@ -244,6 +302,15 @@ export class WASMPreprocessingService implements IPreprocessingService {
   }
 
   async runStage(stage: PreprocessingStage, options: RunStageOptions): Promise<RunStageResult> {
+    // PHI stages are inert when the feature is disabled. The UI shouldn't
+    // surface them, but if a deep-link or stale call hits us, no-op cleanly.
+    if (!this.enablePhi && (PHI_STAGES as readonly PreprocessingStage[]).includes(stage)) {
+      return {
+        queued_count: 0,
+        message: `${stage.replace(/_/g, " ")} is disabled in this mode`,
+      };
+    }
+
     // Get eligible screenshots
     let screenshots: Screenshot[];
     if (options.screenshot_ids?.length) {
@@ -257,9 +324,10 @@ export class WASMPreprocessingService implements IPreprocessingService {
       return { queued_count: 0, message: "No group or screenshot IDs specified" };
     }
 
-    // Filter to eligible: status pending/invalidated/failed, prereqs met
-    const stageIdx = STAGES.indexOf(stage);
-    const prereqs = STAGES.slice(0, stageIdx);
+    // Filter to eligible: status pending/invalidated/failed, prereqs met.
+    // Prereqs come from the active stage list — PHI stages stay PENDING
+    // forever when disabled and would otherwise wedge OCR.
+    const prereqs = this.prereqsFor(stage);
 
     const eligible = screenshots.filter((s) => {
       const pp = getPreprocessing(s);
@@ -314,9 +382,10 @@ export class WASMPreprocessingService implements IPreprocessingService {
     }
 
     // Clean up workers after PHI detection batch
-    if (stage === "phi_detection") {
-      terminateNERWorker();
-      terminateTesseractWorker();
+    if (stage === "phi_detection" && this.phiModulePromise) {
+      const m = await this.phiModulePromise;
+      m.terminateNERWorker();
+      m.terminateTesseractWorker();
     }
 
     return {
@@ -416,6 +485,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
       case "phi_detection": {
         if (!blob) { await this.recordMissingBlob(screenshot, stage); return; }
 
+        const { detectPHI } = await this.loadPhiModule();
         const phiResult = await detectPHI(blob, {
           llmEndpoint: options.llm_endpoint,
           llmModel: options.llm_model,
@@ -463,6 +533,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
         }
 
         const method = (options.phi_redaction_method ?? "redbox") as "redbox" | "blackbox" | "pixelate";
+        const { redactImage } = await this.loadPhiRedactModule();
         const redactedBlob = await redactImage(blob, regions, method);
 
         // Save redacted image as current + stage snapshot
@@ -618,8 +689,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
 
   async resetStage(stage: PreprocessingStage, groupId: string): Promise<{ message: string; count?: number }> {
     const screenshots = await this.storage.getAllScreenshots({ group_id: groupId });
-    const stageIdx = STAGES.indexOf(stage);
-    const downstreamStages = STAGES.slice(stageIdx);
+    const downstreamStages = this.downstreamFrom(stage);
     let count = 0;
 
     for (const s of screenshots) {
@@ -683,10 +753,8 @@ export class WASMPreprocessingService implements IPreprocessingService {
     const screenshot = await this.storage.getScreenshot(screenshotId);
     if (!screenshot) return;
 
-    const stageIdx = STAGES.indexOf(stage as PreprocessingStage);
-    if (stageIdx < 0) return;
-
-    const downstream = STAGES.slice(stageIdx);
+    const downstream = this.downstreamFrom(stage as PreprocessingStage);
+    if (downstream.length === 0) return;
     const pp = getPreprocessing(screenshot);
     const newStageStatus = { ...pp.stage_status };
 
@@ -816,6 +884,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
   }
 
   async getPHIRegions(screenshotId: number): Promise<PHIRegionsResponse> {
+    if (!this.enablePhi) return { regions: [], source: null, event_id: null };
     const screenshot = await this.storage.getScreenshot(screenshotId);
     if (!screenshot) return { regions: [], source: null, event_id: null };
 
@@ -830,6 +899,9 @@ export class WASMPreprocessingService implements IPreprocessingService {
   }
 
   async savePHIRegions(screenshotId: number, body: { regions: PHIRegionRect[]; preset: string }): Promise<void> {
+    if (!this.enablePhi) {
+      throw new Error("PHI editing is disabled in this mode");
+    }
     const screenshot = await this.storage.getScreenshot(screenshotId);
     if (!screenshot) throw new Error(`Screenshot ${screenshotId} not found`);
 
@@ -847,12 +919,16 @@ export class WASMPreprocessingService implements IPreprocessingService {
   }
 
   async applyRedaction(screenshotId: number, body: { regions: PHIRegionRect[]; redaction_method: string }): Promise<void> {
+    if (!this.enablePhi) {
+      throw new Error("PHI redaction is disabled in this mode");
+    }
     const blob = await this.storage.getImageBlob(screenshotId);
     if (!blob) throw new Error("No image blob for redaction");
 
     const regions = (body.regions ?? []) as PHIRegion[];
     const method = (body.redaction_method ?? "redbox") as "redbox" | "blackbox" | "pixelate";
 
+    const { redactImage } = await this.loadPhiRedactModule();
     const redactedBlob = await redactImage(blob, regions, method);
     await this.storage.saveImageBlob(screenshotId, redactedBlob);
     await this.storage.saveStageBlob(screenshotId, "phi_redaction", redactedBlob);

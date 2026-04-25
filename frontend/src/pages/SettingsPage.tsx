@@ -19,6 +19,8 @@ import {
   CheckCircle2,
   Sliders,
   RotateCcw,
+  Trash2,
+  Database,
 } from "lucide-react";
 import { useSyncStore } from "@/core/implementations/wasm/sync";
 import { useThemeStore, THEME_OPTIONS } from "@/store/themeStore";
@@ -456,6 +458,180 @@ function PHISection() {
   );
 }
 
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const v = bytes / Math.pow(1024, i);
+  return `${v >= 10 || i === 0 ? v.toFixed(0) : v.toFixed(1)} ${units[i]}`;
+}
+
+function StorageSection() {
+  const [usage, setUsage] = React.useState<number | null>(null);
+  const [quota, setQuota] = React.useState<number | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [confirming, setConfirming] = React.useState(false);
+
+  const refresh = React.useCallback(async () => {
+    try {
+      const est = await navigator.storage.estimate();
+      setUsage(est.usage ?? null);
+      setQuota(est.quota ?? null);
+    } catch {
+      setUsage(null);
+      setQuota(null);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  async function deleteAll() {
+    setBusy(true);
+    try {
+      // 1) IndexedDB databases (skip system DBs that throw on delete).
+      try {
+        const dbs = await indexedDB.databases?.();
+        if (dbs) {
+          await Promise.all(
+            dbs
+              .filter((db) => db.name)
+              .map(
+                (db) =>
+                  new Promise<void>((resolve) => {
+                    const req = indexedDB.deleteDatabase(db.name as string);
+                    req.onsuccess = () => resolve();
+                    req.onerror = () => resolve();
+                    req.onblocked = () => resolve();
+                  }),
+              ),
+          );
+        }
+      } catch {
+        // ignore — falls through to SW + reload, which usually clears state
+      }
+
+      // 2) OPFS root: recursively wipe everything the app stored.
+      try {
+        const root = await navigator.storage.getDirectory();
+        // @ts-expect-error — TS lib lacks the iterator typing for now.
+        for await (const [name] of root.entries()) {
+          await root.removeEntry(name, { recursive: true }).catch(() => {});
+        }
+      } catch {
+        // OPFS may not be available — ok
+      }
+
+      // 3) Caches (service worker precache + runtime).
+      try {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      } catch {
+        // ignore
+      }
+
+      // 4) Local + session storage.
+      try {
+        localStorage.clear();
+        sessionStorage.clear();
+      } catch {
+        // ignore
+      }
+
+      // 5) Unregister the service worker so the next visit starts clean.
+      try {
+        const regs = await navigator.serviceWorker?.getRegistrations?.();
+        if (regs) await Promise.all(regs.map((r) => r.unregister()));
+      } catch {
+        // ignore
+      }
+
+      window.location.reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const pct = usage !== null && quota ? Math.min(100, (usage / quota) * 100) : null;
+
+  return (
+    <Card padding="lg">
+      <div className="flex items-center gap-3 mb-4">
+        <Database className="w-6 h-6 text-primary-700 dark:text-primary-400" />
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">
+            Local Storage
+          </h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            All screenshots, annotations, and OCR caches stay on this device.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-3 text-sm">
+        <div className="flex justify-between text-slate-700 dark:text-slate-300">
+          <span>Used</span>
+          <span className="font-mono">
+            {usage === null ? "—" : formatBytes(usage)}
+            {quota ? ` / ${formatBytes(quota)}` : ""}
+            {pct !== null ? ` (${pct.toFixed(1)}%)` : ""}
+          </span>
+        </div>
+        {pct !== null && (
+          <div className="h-2 w-full bg-slate-200 dark:bg-slate-700 rounded">
+            <div
+              className="h-2 bg-primary-500 rounded"
+              style={{ width: `${pct}%` }}
+              aria-label={`Storage used: ${pct.toFixed(1)}%`}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="mt-6 flex flex-col sm:flex-row gap-3">
+        <button
+          onClick={refresh}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-slate-300 dark:border-slate-600 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 focus-ring"
+        >
+          <RefreshCw className="w-4 h-4" /> Refresh
+        </button>
+        {!confirming ? (
+          <button
+            onClick={() => setConfirming(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-red-300 dark:border-red-700 text-sm text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 focus-ring"
+          >
+            <Trash2 className="w-4 h-4" /> Delete all local data
+          </button>
+        ) : (
+          <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-md p-3">
+            <span className="text-sm text-red-700 dark:text-red-300">
+              This wipes IndexedDB, OPFS, caches, localStorage, and unregisters the service worker. There is no undo.
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfirming(false)}
+                disabled={busy}
+                className="px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-600 text-sm text-slate-700 dark:text-slate-300 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={deleteAll}
+                disabled={busy}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-red-600 text-white text-sm hover:bg-red-700 disabled:opacity-50"
+              >
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Yes, wipe everything
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export const SettingsPage: React.FC = () => {
   const isLocalMode = config.isLocalMode;
   const modeLabel = config.isTauri ? "Desktop" : "Local (WASM)";
@@ -525,7 +701,7 @@ export const SettingsPage: React.FC = () => {
               <div className="font-medium text-slate-700 dark:text-slate-300">Processing</div>
               <div className="text-slate-600 dark:text-slate-400 mt-1">
                 {isLocalMode
-                  ? "Tesseract.js (Web Worker)"
+                  ? "Rust + leptess (WASM)"
                   : "Backend (Rust + Python OCR)"}
               </div>
             </div>
@@ -553,13 +729,17 @@ export const SettingsPage: React.FC = () => {
         {/* Sync section (WASM mode only) */}
         {isLocalMode && <SyncSection />}
 
+        {/* Local storage management (WASM mode only) */}
+        {isLocalMode && <StorageSection />}
+
 
         {/* About Section */}
         <Card padding="lg">
           <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-4">About</h2>
           <div className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
             <p>
-              <strong>Version:</strong> {config.appVersion}
+              <strong>Version:</strong> {config.appVersion}{" "}
+              <span className="font-mono text-xs">({config.commitSha})</span>
             </p>
             <p>
               <strong>Build:</strong>{" "}

@@ -4,8 +4,9 @@
  * Builds the app bundle, CSS, service worker, and generates index.html + manifest.
  */
 
-import { rm, mkdir, copyFile } from "fs/promises";
+import { rm, mkdir, copyFile, readFile } from "fs/promises";
 import { join, resolve } from "path";
+import { execSync } from "child_process";
 
 const ROOT_DIR = resolve(import.meta.dir, "..");
 const SRC_DIR = join(ROOT_DIR, "src");
@@ -46,9 +47,26 @@ const pathAliasPlugin: import("bun").BunPlugin = {
   },
 };
 
+function resolveCommitSha(): string {
+  const envSha = process.env.VITE_COMMIT_SHA || process.env.GITHUB_SHA;
+  if (envSha) return envSha.slice(0, 7);
+  try {
+    return execSync("git rev-parse --short HEAD", { cwd: ROOT_DIR, stdio: ["ignore", "pipe", "ignore"] })
+      .toString()
+      .trim();
+  } catch {
+    return "dev";
+  }
+}
+
 async function build() {
   console.log("\x1b[34m[build]\x1b[0m Starting production build...\n");
   const startTime = performance.now();
+
+  const pkg = JSON.parse(await readFile(join(ROOT_DIR, "package.json"), "utf-8"));
+  const appVersion: string = pkg.version ?? "dev";
+  const commitSha = resolveCommitSha();
+  console.log(`\x1b[33m[build]\x1b[0m version=${appVersion} sha=${commitSha}`);
 
   // Clean dist directory
   await rm(DIST_DIR, { recursive: true, force: true });
@@ -59,7 +77,24 @@ async function build() {
   console.log("\x1b[33m[build]\x1b[0m Bundling JavaScript...");
 
   const result = await Bun.build({
-    entrypoints: [join(SRC_DIR, "main.tsx")],
+    // Multi-entrypoint: bundle main.tsx AND every Web Worker module separately
+    // so `new Worker(new URL("./foo.ts", import.meta.url))` callers can load
+    // them at runtime. Bun's bundler does not auto-detect those URL patterns
+    // (it leaves the literal .ts path in the bundle, which 404s in dist).
+    // Listing each worker file explicitly emits a hashed JS chunk that the
+    // browser can load.
+    entrypoints: [
+      join(SRC_DIR, "main.tsx"),
+      join(
+        SRC_DIR,
+        "core/implementations/wasm/processing/workers/imageProcessor.worker.emscripten.ts",
+      ),
+      // NER worker for PHI detection — separately code-split.
+      join(
+        SRC_DIR,
+        "core/implementations/wasm/preprocessing/nerWorker.ts",
+      ),
+    ],
     outdir: join(DIST_DIR, "assets"),
     target: "browser",
     format: "esm",
@@ -76,6 +111,8 @@ async function build() {
     ],
     define: {
       "process.env.NODE_ENV": JSON.stringify("production"),
+      __APP_VERSION__: JSON.stringify(appVersion),
+      __COMMIT_SHA__: JSON.stringify(commitSha),
     },
   });
 
@@ -85,6 +122,50 @@ async function build() {
       console.error(log);
     }
     process.exit(1);
+  }
+
+  // Map each worker source path → its hashed output filename, then rewrite
+  // every `new URL("./worker.ts", import.meta.url)` literal in the bundled JS
+  // to point at the real built chunk. Without this, the runtime fetches a
+  // non-existent .ts URL.
+  const workerOutputMap = new Map<string, string>();
+  for (const output of result.outputs) {
+    const name = output.path.split(/[/\\]/).pop() || "";
+    if (name.startsWith("imageProcessor.worker.emscripten") && name.endsWith(".js")) {
+      workerOutputMap.set("imageProcessor.worker.emscripten.ts", `./${name}`);
+    } else if (name.startsWith("nerWorker") && name.endsWith(".js")) {
+      workerOutputMap.set("nerWorker.ts", `./${name}`);
+    }
+  }
+  if (workerOutputMap.size > 0) {
+    for (const output of result.outputs) {
+      const name = output.path.split(/[/\\]/).pop() || "";
+      if (!name.endsWith(".js") || name.endsWith(".map")) continue;
+      const filePath = output.path;
+      let text = await Bun.file(filePath).text();
+      let changed = false;
+      for (const [src, hashed] of workerOutputMap) {
+        // Match: new URL("…/imageProcessor.worker.emscripten.ts", import.meta.url)
+        // Replace the path arg with the hashed sibling chunk URL. Bun emits
+        // both the worker chunk and the main chunk into the same /assets/ dir,
+        // so a relative ./file.js works from either.
+        const pattern = new RegExp(
+          `(new URL\\(\\s*["'])([^"']*?)(${src.replace(/\./g, "\\.")})(["'])`,
+          "g",
+        );
+        const next = text.replace(pattern, `$1${hashed}$4`);
+        if (next !== text) {
+          text = next;
+          changed = true;
+        }
+      }
+      if (changed) {
+        await Bun.write(filePath, text);
+        console.log(
+          `  \x1b[32m✓\x1b[0m worker URL rewrite in ${output.path.split(/[/\\]/).pop()}`,
+        );
+      }
+    }
   }
 
   // Get the main bundle filename
@@ -153,12 +234,24 @@ async function build() {
     console.log("  (no public files)");
   }
 
+  // Subpath awareness: BASE_PATH (e.g. "/ios-screen-time-screenshot-processing")
+  // is set by the GitHub Pages workflow before invoking the build. Empty by
+  // default for root-served deploys (Docker, local). The leading slash is
+  // mandatory; trailing slash is stripped.
+  const rawBase = (process.env.BASE_PATH || "").trim();
+  const BASE_PATH = rawBase === "" || rawBase === "/" ? "" : rawBase.replace(/\/+$/, "");
+  if (BASE_PATH) {
+    console.log(`\x1b[33m[build]\x1b[0m BASE_PATH = ${BASE_PATH}`);
+  }
+  const baseHrefTag = BASE_PATH ? `\n    <base href="${BASE_PATH}/" />` : "";
+  const prefix = (p: string) => `${BASE_PATH}${p.startsWith("/") ? p : "/" + p}`;
+
   // Generate index.html
   // Use relative paths (./assets/) so it works with any base path prefix
   console.log("\n\x1b[33m[build]\x1b[0m Generating index.html...");
   const html = `<!DOCTYPE html>
 <html lang="en">
-  <head>
+  <head>${baseHrefTag}
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>iOS Screen Time Screenshot Processing</title>
@@ -180,23 +273,185 @@ async function build() {
 
   await Bun.write(join(DIST_DIR, "index.html"), html);
 
-  // Generate PWA manifest
+  // Emit a default config.js so static hosts (GitHub Pages, plain nginx) don't
+  // 404 the <script src="./config.js"> in index.html. The Docker entrypoint
+  // overwrites this file with the runtime-injected API_BASE_URL when the
+  // backend variant of the image is built.
+  console.log("\n\x1b[33m[build]\x1b[0m Generating config.js (no-API default)...");
+  await Bun.write(
+    join(DIST_DIR, "config.js"),
+    `// Generated by frontend/server/build.ts. Static-host default: WASM mode\n` +
+      `// (no API). Docker entrypoint overwrites this when API_BASE_URL is set.\n` +
+      `window.__CONFIG__ = ${JSON.stringify({ basePath: BASE_PATH })};\n`,
+  );
+
+  // Generate PWA manifest. Single source of truth for both deployments — the
+  // older frontend/public/manifest.webmanifest is no longer copied into dist.
+  // start_url / scope / shortcut/share/file URLs are all BASE_PATH-aware.
   console.log("\n\x1b[33m[build]\x1b[0m Generating manifest.json...");
   const manifest = {
-    name: "iOS Screenshot Processing",
-    short_name: "iOSScreens",
-    description: "Process iPhone screen time and battery screenshots with OCR extraction",
-    theme_color: "#0F766E",
-    background_color: "#ffffff",
+    name: "iOS Screen Time Screenshot Processing",
+    short_name: "iOS Screen Time",
+    description:
+      "Extract and analyze battery and screen time usage data from iOS screenshots — fully local OCR, no uploads.",
+    start_url: prefix("/"),
+    scope: prefix("/"),
     display: "standalone",
-    start_url: "/",
-    scope: "/",
+    background_color: "#ffffff",
+    theme_color: "#0F766E",
+    orientation: "any",
     icons: [
-      { src: "/icons/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" },
+      {
+        src: prefix("/icons/icon.svg"),
+        sizes: "any",
+        type: "image/svg+xml",
+        purpose: "any",
+      },
+      {
+        src: prefix("/icons/icon-192.png"),
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "any",
+      },
+      {
+        src: prefix("/icons/icon-512.png"),
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "any",
+      },
+      {
+        src: prefix("/icons/icon-maskable-512.png"),
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "maskable",
+      },
     ],
-    categories: ["productivity", "utilities"],
+    screenshots: [
+      {
+        src: prefix("/screenshots/desktop-1280x720.png"),
+        sizes: "1280x720",
+        type: "image/png",
+        form_factor: "wide",
+        label: "iOS Screen Time — Desktop View",
+      },
+      {
+        src: prefix("/screenshots/mobile-750x1334.png"),
+        sizes: "750x1334",
+        type: "image/png",
+        form_factor: "narrow",
+        label: "iOS Screen Time — Mobile View",
+      },
+    ],
+    categories: ["productivity", "utilities", "tools"],
+    shortcuts: [
+      {
+        name: "Upload Screenshots",
+        short_name: "Upload",
+        description: "Upload new screenshots for processing",
+        url: prefix("/?action=upload"),
+        icons: [
+          {
+            src: prefix("/icons/icon.svg"),
+            sizes: "any",
+            type: "image/svg+xml",
+          },
+        ],
+      },
+      {
+        name: "View Gallery",
+        short_name: "Gallery",
+        description: "View all processed screenshots",
+        url: prefix("/?action=gallery"),
+        icons: [
+          {
+            src: prefix("/icons/icon.svg"),
+            sizes: "any",
+            type: "image/svg+xml",
+          },
+        ],
+      },
+    ],
+    share_target: {
+      action: prefix("/share"),
+      method: "POST",
+      enctype: "multipart/form-data",
+      params: {
+        files: [
+          {
+            name: "screenshots",
+            accept: ["image/png", "image/jpeg", "image/jpg"],
+          },
+        ],
+      },
+    },
+    file_handlers: [
+      {
+        action: prefix("/open"),
+        accept: {
+          "image/png": [".png"],
+          "image/jpeg": [".jpg", ".jpeg"],
+        },
+      },
+    ],
+    launch_handler: { client_mode: "focus-existing" },
+    edge_side_panel: { preferred_width: 480 },
+    prefer_related_applications: false,
   };
   await Bun.write(join(DIST_DIR, "manifest.json"), JSON.stringify(manifest, null, 2));
+
+  // Service worker precache manifest. The SW reads this file on `install` and
+  // populates its caches with every URL listed. This is what makes the app
+  // work on a flight-mode reload — without it, only the bare HTML shell is
+  // cached and the JS/WASM/tessdata chunks 404 when the network is gone.
+  console.log("\n\x1b[33m[build]\x1b[0m Generating sw-precache.json...");
+  const assetGlob = new Bun.Glob("**/*");
+  const assetEntries: string[] = [];
+  for await (const file of assetGlob.scan(join(DIST_DIR, "assets"))) {
+    if (file.endsWith(".map")) continue;
+    // The PHI NER worker (~880KB) is only used by the server-mode PHI
+    // detection path. WASM-mode public deploys (GitHub Pages) gate that
+    // feature off, so precaching it would just waste first-load bandwidth.
+    // Server-mode users still load it from network on demand when PHI runs.
+    if (/^nerWorker-[A-Za-z0-9]+\.js$/.test(file)) continue;
+    assetEntries.push(prefix(`/assets/${file}`));
+  }
+
+  const pipelineEmEntries: string[] = [];
+  const pipelineEmDir = join(DIST_DIR, "pipeline-em");
+  try {
+    for await (const file of assetGlob.scan(pipelineEmDir)) {
+      pipelineEmEntries.push(prefix(`/pipeline-em/${file}`));
+    }
+  } catch {
+    // pipeline-em not present (build script wasn't run yet) — SW will still
+    // work, but the WASM pipeline won't load offline. Surface a warning.
+    console.log(
+      "  \x1b[31m✗\x1b[0m pipeline-em/ missing — run scripts/build-wasm-emscripten.sh first",
+    );
+  }
+
+  const precache = {
+    version: 2,
+    basePath: BASE_PATH,
+    shellAssets: [
+      prefix("/"),
+      prefix("/index.html"),
+      prefix("/manifest.json"),
+      prefix("/config.js"),
+      prefix("/offline.html"),
+    ],
+    appAssets: assetEntries,
+    pipelineAssets: pipelineEmEntries,
+  };
+  await Bun.write(
+    join(DIST_DIR, "sw-precache.json"),
+    JSON.stringify(precache, null, 2),
+  );
+  console.log(
+    `  \x1b[32m✓\x1b[0m sw-precache.json (${
+      precache.shellAssets.length + precache.appAssets.length + precache.pipelineAssets.length
+    } urls)`,
+  );
 
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
   console.log("\n\x1b[32m[build]\x1b[0m Build completed in " + elapsed + "s");

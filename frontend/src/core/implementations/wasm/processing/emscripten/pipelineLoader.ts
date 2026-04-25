@@ -50,12 +50,37 @@ export interface EmOcrResult {
   error?: string;
 }
 
+/** Per-word OCR result for PHI detection. `char_start`/`char_end` are
+ *  offsets into the joined `full_text` (space-separated), so JS can map
+ *  regex/NER matches back to image bboxes without re-tokenizing. */
+export interface EmPhiWord {
+  text: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  conf: number;
+  char_start: number;
+  char_end: number;
+}
+
+export interface EmPhiWordsResult {
+  success: boolean;
+  words?: EmPhiWord[];
+  full_text?: string;
+  avg_confidence?: number;
+  error?: string;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type EmscriptenModule = any;
 
 let modulePromise: Promise<EmscriptenModule> | null = null;
 
-const BASE = new URL("/pipeline-em/", location.href).href;
+// Resolve relative to the bundled chunk URL. Under GitHub Pages this becomes
+// `https://<host>/<repo>/assets/<chunk>.js`, so `../pipeline-em/` lands at
+// `<repo>/pipeline-em/`. An absolute `/pipeline-em/` would break the subpath.
+const BASE = new URL("../pipeline-em/", import.meta.url).href;
 const OUTPUT_BUFFER_SIZE = 65536; // 64 KB — enough for any JSON result
 
 async function loadModule(): Promise<EmscriptenModule> {
@@ -265,5 +290,49 @@ export async function emExtractOcr(imageData: ImageData): Promise<EmOcrResult> {
   } finally {
     mod._pipeline_free(rgbaPtr, rgba.length);
     mod._pipeline_free(outPtr, OUTPUT_BUFFER_SIZE);
+  }
+}
+
+/**
+ * Full-page OCR for PHI detection. Returns every word with bbox + confidence
+ * + character offsets into the joined `full_text`. Replaces Tesseract.js for
+ * the PHI redaction pipeline.
+ *
+ * The output buffer is 1 MB rather than 64 KB because a long screenshot
+ * (multi-app summary view) can have hundreds of words and the JSON balloons.
+ */
+const PHI_OUTPUT_BUFFER_SIZE = 1024 * 1024; // 1 MB
+
+export async function emPhiWords(imageData: ImageData): Promise<EmPhiWordsResult> {
+  const mod = await loadModule();
+
+  const rgba = imageData.data as Uint8ClampedArray;
+  const width = imageData.width;
+  const height = imageData.height;
+
+  const rgbaPtr = mod._pipeline_alloc(rgba.length);
+  const outPtr = mod._pipeline_alloc(PHI_OUTPUT_BUFFER_SIZE);
+
+  try {
+    mod.HEAPU8.set(rgba, rgbaPtr);
+
+    const written: number = mod._pipeline_phi_words(
+      rgbaPtr,
+      rgba.length,
+      width,
+      height,
+      outPtr,
+      PHI_OUTPUT_BUFFER_SIZE,
+    );
+
+    if (written < 0) {
+      return { success: false, error: "Output buffer too small" };
+    }
+
+    const json = new TextDecoder().decode(mod.HEAPU8.subarray(outPtr, outPtr + written));
+    return JSON.parse(json) as EmPhiWordsResult;
+  } finally {
+    mod._pipeline_free(rgbaPtr, rgba.length);
+    mod._pipeline_free(outPtr, PHI_OUTPUT_BUFFER_SIZE);
   }
 }

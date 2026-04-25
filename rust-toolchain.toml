@@ -1,0 +1,9 @@
+# Pinned so contributor builds, CI runs, and the WASM emscripten toolchain
+# all agree on a Rust version. Bump this in a single commit when needed —
+# don't drift across machines. `targets` ensures a fresh checkout can build
+# the browser pipeline without a separate `rustup target add`.
+[toolchain]
+channel = "1.94.1"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-emscripten"]
+profile = "minimal"

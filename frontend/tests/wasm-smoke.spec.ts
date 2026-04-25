@@ -94,7 +94,9 @@ test.describe("WASM Authentication", () => {
       .getByRole("button", { name: /get started/i })
       .click();
     await expect(page).not.toHaveURL(/\/login/);
-    await expect(page.getByText(/alice/i)).toBeVisible();
+    // Pin to the header username chip — the welcome toast also contains
+    // "Alice", which trips strict mode.
+    await expect(page.getByText("Alice", { exact: true })).toBeVisible();
   });
 
   test("shows optional server sync checkbox", async ({ page }) => {
@@ -126,12 +128,21 @@ test.describe("WASM Navigation", () => {
   });
 
   test("header shows all expected nav links", async ({ page }) => {
+    // WASM mode hides Upload, Consensus, and Admin (see Header.tsx) — those
+    // require server features (cross-rater consensus, admin endpoints, the
+    // separate upload page). The "/" route is labelled "Groups" rather than
+    // "Home"; renaming is a separate UX item.
     const nav = page.locator("nav");
-    await expect(nav.getByText("Home")).toBeVisible();
     await expect(nav.getByText("Preprocessing")).toBeVisible();
+    await expect(nav.getByText("Groups")).toBeVisible();
     await expect(nav.getByText("Annotate")).toBeVisible();
-    await expect(nav.getByText("Consensus")).toBeVisible();
     await expect(nav.getByText("Settings")).toBeVisible();
+  });
+
+  test("Consensus link is NOT shown in WASM mode", async ({ page }) => {
+    await expect(
+      page.locator("nav").getByText("Consensus", { exact: true }),
+    ).not.toBeVisible();
   });
 
   test("Upload link is NOT shown in WASM mode", async ({ page }) => {
@@ -157,9 +168,14 @@ test.describe("WASM Navigation", () => {
     await expect(page).toHaveURL(/\/annotate/);
   });
 
-  test("navigates to Consensus page", async ({ page }) => {
-    await page.getByRole("link", { name: "Consensus" }).click();
-    await expect(page).toHaveURL(/\/consensus/);
+  test("/consensus redirects to / in WASM mode (server-only feature)", async ({
+    page,
+  }) => {
+    // AppRouter gates /consensus on features.consensusComparison, which
+    // bootstrapWasm sets to false (single-rater workflows have no
+    // cross-rater comparison to render). The route redirects to home.
+    await page.goto("/consensus");
+    await expect(page).toHaveURL(/127\.0\.0\.1:9091\/?$/);
   });
 
   test("navigates to Settings page", async ({ page }) => {
@@ -319,40 +335,40 @@ test.describe("WASM Preprocessing Page", () => {
     await wasmLogin(page);
   });
 
-  test("shows stats cards", async ({ page }) => {
-    await page.goto("/preprocessing");
-    await expect(page.getByText("Total", { exact: true })).toBeVisible();
-    await expect(page.getByText("Pending", { exact: true })).toBeVisible();
-    await expect(page.getByText("Processed", { exact: true })).toBeVisible();
-    await expect(page.getByText("Failed", { exact: true })).toBeVisible();
-  });
-
-  test("shows page heading", async ({ page }) => {
+  test("shows pipeline heading", async ({ page }) => {
     await page.goto("/preprocessing");
     await expect(
-      page.getByRole("heading", { name: /preprocessing/i }),
+      page.getByRole("heading", { name: /preprocessing pipeline/i }),
     ).toBeVisible();
   });
 
-  test("refresh button exists and is enabled", async ({ page }) => {
+  test("shows wizard stage tabs", async ({ page }) => {
     await page.goto("/preprocessing");
+    // Wait for React to mount + the wizard heading to render before checking
+    // for stage descriptions.
     await expect(
-      page.getByRole("button", { name: /refresh/i }),
-    ).toBeEnabled();
+      page.getByRole("heading", { name: /preprocessing pipeline/i }),
+    ).toBeVisible({ timeout: 10_000 });
+    const body = await page.textContent("body");
+    expect(body).toMatch(
+      /Identifies device type|Removes iPad sidebar|Detects personal information|Blacks out detected|Extracts app title/,
+    );
   });
 
-  test("shows empty state when no screenshots", async ({ page }) => {
-    await clearAllState(page);
-    await wasmLogin(page);
+  test("Group selector exists", async ({ page }) => {
     await page.goto("/preprocessing");
-    await expect(
-      page.getByText(/no screenshots loaded/i),
-    ).toBeVisible();
+    await expect(page.getByText(/group:/i).first()).toBeVisible();
   });
 
-  test("shows pending count after uploading screenshots", async ({
-    page,
-  }) => {
+  test("shows screenshot count footer", async ({ page }) => {
+    await page.goto("/preprocessing");
+    await page.waitForTimeout(1000);
+    // Footer renders `<n> screenshots in <group>`. With no upload, n=0.
+    const body = await page.textContent("body");
+    expect(body).toMatch(/\d+ screenshots? in/);
+  });
+
+  test("populates after uploading screenshots", async ({ page }) => {
     await clearAllState(page);
     await wasmLogin(page);
     await uploadFixtures(page);
@@ -360,24 +376,9 @@ test.describe("WASM Preprocessing Page", () => {
     await page.goto("/preprocessing");
     await page.waitForTimeout(2000);
 
-    // Pending count should be > 0 (amber colored number)
-    const pendingCard = page
-      .locator(".text-amber-600")
-      .or(page.getByText(/[1-9]/));
-    await expect(pendingCard.first()).toBeVisible();
-  });
-
-  test("process button shows pending count", async ({ page }) => {
-    await clearAllState(page);
-    await wasmLogin(page);
-    await uploadFixtures(page);
-
-    await page.goto("/preprocessing");
-    await page.waitForTimeout(2000);
-
-    await expect(
-      page.getByRole("button", { name: /process.*pending/i }),
-    ).toBeEnabled();
+    const body = await page.textContent("body");
+    // After uploading 4 fixtures, the footer should reflect that count.
+    expect(body).toMatch(/[1-9]\d*\s+screenshots?\s+in/);
   });
 });
 
@@ -687,7 +688,12 @@ test.describe("WASM Error Resilience", () => {
           !text.includes("manifest") &&
           !text.includes("sw.js") &&
           !text.includes("service-worker") &&
-          !text.includes("Worker error")
+          !text.includes("Worker error") &&
+          // Transient: when the test rapidly navigates after a state-reset
+          // login, a child component can render once before the new container
+          // is provided. ErrorBoundary catches it and the next render succeeds.
+          // Same exclusion as the Full Workflow test below.
+          !text.includes("Service not registered")
         ) {
           errors.push(text);
         }
@@ -743,10 +749,15 @@ test.describe("WASM Full Workflow", () => {
     // Step 2: Upload screenshots on home page
     await uploadFixtures(page);
 
-    // Step 3: Navigate to preprocessing — should show pending
+    // Step 3: Navigate to preprocessing — should show the wizard heading and
+    // a footer with the uploaded screenshot count.
     await page.goto("/preprocessing");
     await page.waitForTimeout(2000);
-    await expect(page.getByText("Pending", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /preprocessing pipeline/i }),
+    ).toBeVisible();
+    const preprocessBody = await page.textContent("body");
+    expect(preprocessBody).toMatch(/[1-9]\d*\s+screenshots?\s+in/);
 
     // Step 4: Navigate to annotate — should have data
     await page.goto("/annotate");

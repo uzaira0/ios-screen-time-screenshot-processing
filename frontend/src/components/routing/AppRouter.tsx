@@ -38,6 +38,13 @@ import { useAuthStore } from "@/store/authStore";
 import { useFeatures } from "@/core/hooks/useServices";
 import { useAuth } from "@/hooks/useAuth";
 import { PreprocessingProvider } from "@/hooks/usePreprocessingWithDI";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+
+/** Per-route ErrorBoundary so a crash on one page doesn't blank the entire
+ *  app. The App-level boundary still catches anything that escapes a route. */
+const RouteBoundary: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <ErrorBoundary>{children}</ErrorBoundary>
+);
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -93,7 +100,9 @@ export const AppRouter: React.FC = () => {
         path="/"
         element={
           <ProtectedRoute>
-            <HomePage />
+            <RouteBoundary>
+              <HomePage />
+            </RouteBoundary>
           </ProtectedRoute>
         }
       />
@@ -102,7 +111,9 @@ export const AppRouter: React.FC = () => {
         path="/annotate"
         element={
           <ProtectedRoute>
-            <AnnotationPage />
+            <RouteBoundary>
+              <AnnotationPage />
+            </RouteBoundary>
           </ProtectedRoute>
         }
       />
@@ -110,7 +121,9 @@ export const AppRouter: React.FC = () => {
         path="/annotate/:id"
         element={
           <ProtectedRoute>
-            <AnnotationPage />
+            <RouteBoundary>
+              <AnnotationPage />
+            </RouteBoundary>
           </ProtectedRoute>
         }
       />
@@ -120,7 +133,9 @@ export const AppRouter: React.FC = () => {
         element={
           <ProtectedRoute>
             {features.consensusComparison ? (
-              <ConsensusPage />
+              <RouteBoundary>
+                <ConsensusPage />
+              </RouteBoundary>
             ) : (
               <Navigate to="/" replace />
             )}
@@ -133,9 +148,11 @@ export const AppRouter: React.FC = () => {
         element={
           <ProtectedRoute>
             {features.consensusComparison ? (
-              <React.Suspense fallback={ServerOnlyFallback}>
-                <ConsensusComparisonPage />
-              </React.Suspense>
+              <RouteBoundary>
+                <React.Suspense fallback={ServerOnlyFallback}>
+                  <ConsensusComparisonPage />
+                </React.Suspense>
+              </RouteBoundary>
             ) : (
               <Navigate to="/consensus" replace />
             )}
@@ -148,9 +165,11 @@ export const AppRouter: React.FC = () => {
         element={
           <ProtectedRoute>
             {features.preprocessing ? (
-              <PreprocessingProvider>
-                <UploadPage />
-              </PreprocessingProvider>
+              <RouteBoundary>
+                <PreprocessingProvider>
+                  <UploadPage />
+                </PreprocessingProvider>
+              </RouteBoundary>
             ) : (
               <Navigate to="/" replace />
             )}
@@ -163,11 +182,13 @@ export const AppRouter: React.FC = () => {
         element={
           <ProtectedRoute>
             {features.preprocessing ? (
-              <React.Suspense fallback={ServerOnlyFallback}>
-                <PreprocessingProvider>
-                  <PreprocessingPage />
-                </PreprocessingProvider>
-              </React.Suspense>
+              <RouteBoundary>
+                <React.Suspense fallback={ServerOnlyFallback}>
+                  <PreprocessingProvider>
+                    <PreprocessingPage />
+                  </PreprocessingProvider>
+                </React.Suspense>
+              </RouteBoundary>
             ) : (
               <Navigate to="/" replace />
             )}
@@ -183,9 +204,11 @@ export const AppRouter: React.FC = () => {
         element={
           <AdminRoute>
             {features.admin ? (
-              <React.Suspense fallback={ServerOnlyFallback}>
-                <AdminPage />
-              </React.Suspense>
+              <RouteBoundary>
+                <React.Suspense fallback={ServerOnlyFallback}>
+                  <AdminPage />
+                </React.Suspense>
+              </RouteBoundary>
             ) : (
               <Navigate to="/" replace />
             )}
@@ -196,11 +219,20 @@ export const AppRouter: React.FC = () => {
         path="/settings"
         element={
           <ProtectedRoute>
-            <SettingsPage />
+            <RouteBoundary>
+              <SettingsPage />
+            </RouteBoundary>
           </ProtectedRoute>
         }
       />
-      <Route path="/help" element={<HelpPage />} />
+      <Route
+        path="/help"
+        element={
+          <RouteBoundary>
+            <HelpPage />
+          </RouteBoundary>
+        }
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

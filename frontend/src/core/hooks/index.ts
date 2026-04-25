@@ -6,4 +6,6 @@ export {
   useStorageService,
   useProcessingService,
   usePreprocessingPipelineService,
+  useFeatures,
+  useActiveStages,
 } from "./useServices";
