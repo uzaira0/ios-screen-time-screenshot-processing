@@ -125,8 +125,17 @@ async function loadModule(): Promise<EmscriptenModule> {
       return r.arrayBuffer();
     });
 
+    // Tesseract's strict convention is to search at
+    // ${TESSDATA_PREFIX}/tessdata/eng.traineddata. Some build/version
+    // combinations also fall back to ${TESSDATA_PREFIX}/eng.traineddata,
+    // but the conventional path is the one that consistently works
+    // across leptess/libtesseract revisions. Mount the file at both
+    // locations so neither resolution path can silently fail.
     mod.FS.mkdir("/tesseract");
-    mod.FS.writeFile("/tesseract/eng.traineddata", new Uint8Array(tessdata));
+    mod.FS.mkdir("/tesseract/tessdata");
+    const buf = new Uint8Array(tessdata);
+    mod.FS.writeFile("/tesseract/tessdata/eng.traineddata", buf);
+    mod.FS.writeFile("/tesseract/eng.traineddata", buf);
 
     return mod;
   })();

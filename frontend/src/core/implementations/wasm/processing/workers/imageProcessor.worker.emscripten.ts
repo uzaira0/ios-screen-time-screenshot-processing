@@ -92,6 +92,12 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
 
         postProgress("complete", 100, "Done");
 
+        // Surface ocr_error to the main thread (and console) so a silent
+        // Tesseract failure — wrong tessdata path, init crash, etc. —
+        // doesn't just look like 'OCR found no title'.
+        if (result.ocr_error) {
+          console.warn("[imageProcessor.worker] OCR error from pipeline_em:", result.ocr_error);
+        }
         const response: WorkerResponse = {
           type: "PROCESS_IMAGE_COMPLETE",
           id,

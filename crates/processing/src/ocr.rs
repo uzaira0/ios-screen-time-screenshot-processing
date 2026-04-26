@@ -444,8 +444,14 @@ fn words_to_title_text<'a>(words: impl Iterator<Item = &'a OcrWord>) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
+    // Strip outer artifacts. Tesseract often misreads the small app icon
+    // sitting to the left of the title as `~`, `*`, `#`, `_`, etc.,
+    // which trickles through as a leading garbage glyph; strip these
+    // along with whitespace so the title reads cleanly.
     raw.trim()
-        .trim_matches(|c| c == '#' || c == '_' || c == ' ')
+        .trim_matches(|c: char| {
+            c == '#' || c == '_' || c == '~' || c == '*' || c == '`' || c.is_whitespace()
+        })
         .to_string()
 }
 
