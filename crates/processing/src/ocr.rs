@@ -311,11 +311,22 @@ pub struct PhiWord {
 /// Uses `set_image_from_mem` to avoid temp file I/O entirely.
 #[cfg(feature = "ocr")]
 pub fn run_tesseract(img: &RgbImage, psm: &str) -> Result<Vec<OcrWord>, ProcessingError> {
-    // Encode image to PNG in memory
-    let mut png_buf = Vec::new();
-    let encoder = image::codecs::png::PngEncoder::new(&mut png_buf);
+    // Encode the image as BMP, not PNG. The Leptonica WASM build is
+    // configured with -DENABLE_PNG=OFF / -DENABLE_ZLIB=OFF (and the
+    // Emscripten-port libpng/zlib aren't linked in), so leptess'
+    // pixReadMem refuses to decode PNG bytes with
+    // 'pixReadMemPng: function not present' and OCR silently returns
+    // 'Set image from mem failed: Failed to read image from memory'
+    // — which is exactly the symptom in production.
+    //
+    // BMP is supported by Leptonica's built-in readers without any
+    // external library dependency, so it works regardless of how
+    // Leptonica was configured. The few extra bytes vs PNG are
+    // irrelevant — this is an in-memory transfer, not a network upload.
+    let mut bmp_buf = Vec::new();
+    let encoder = image::codecs::bmp::BmpEncoder::new(&mut bmp_buf);
     img.write_with_encoder(encoder)
-        .map_err(|e| ProcessingError::Ocr(format!("PNG encode failed: {e}")))?;
+        .map_err(|e| ProcessingError::Ocr(format!("BMP encode failed: {e}")))?;
 
     with_leptess(psm, |lt| {
         // Match the Python reference, which uses pytesseract's default
@@ -326,7 +337,7 @@ pub fn run_tesseract(img: &RgbImage, psm: &str) -> Result<Vec<OcrWord>, Processi
         // enough on its own without a hand-curated allow-list.
         lt.set_variable(leptess::Variable::TesseditCharWhitelist, "")
             .ok();
-        lt.set_image_from_mem(&png_buf)
+        lt.set_image_from_mem(&bmp_buf)
             .map_err(|e| ProcessingError::Ocr(format!("Set image from mem failed: {e}")))?;
         lt.recognize();
         parse_tsv_words(lt)
@@ -368,16 +379,19 @@ pub fn parse_tsv_words(lt: &mut leptess::LepTess) -> Result<Vec<OcrWord>, Proces
 /// (which `run_tesseract` already does).
 #[cfg(feature = "ocr")]
 pub fn run_phi_ocr_words(img: &RgbImage) -> Result<Vec<PhiWord>, ProcessingError> {
-    let mut png_buf = Vec::new();
-    let encoder = image::codecs::png::PngEncoder::new(&mut png_buf);
+    // Encode as BMP for the same reason as run_tesseract: the WASM
+    // Leptonica build has PNG support disabled, so PNG bytes can't be
+    // decoded by pixReadMem. BMP is built into Leptonica.
+    let mut bmp_buf = Vec::new();
+    let encoder = image::codecs::bmp::BmpEncoder::new(&mut bmp_buf);
     img.write_with_encoder(encoder)
-        .map_err(|e| ProcessingError::Ocr(format!("PNG encode failed: {e}")))?;
+        .map_err(|e| ProcessingError::Ocr(format!("BMP encode failed: {e}")))?;
 
     with_leptess("3", |lt| {
         // Clear any whitelist a previous digit-only call left behind.
         lt.set_variable(leptess::Variable::TesseditCharWhitelist, "")
             .ok();
-        lt.set_image_from_mem(&png_buf)
+        lt.set_image_from_mem(&bmp_buf)
             .map_err(|e| ProcessingError::Ocr(format!("Set image from mem failed: {e}")))?;
         lt.recognize();
         let tsv = lt.get_tsv_text(0).unwrap_or_default();
