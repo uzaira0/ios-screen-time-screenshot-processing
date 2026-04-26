@@ -255,13 +255,14 @@ export const PreprocessingPage = () => {
     isRunningStage && currentLocation.pathname !== nextLocation.pathname,
   );
   useEffect(() => {
-    if (blocker.state === "blocked") {
-      const ok = window.confirm(
-        "Processing is still running. Leaving now will pause it — any in-flight screenshots may need to be re-run from this stage. Leave anyway?",
-      );
-      if (ok) blocker.proceed?.();
-      else blocker.reset?.();
-    }
+    if (blocker.state !== "blocked") return;
+    // react-router types guarantee proceed/reset are non-undefined in
+    // the "blocked" branch (BlockerBlocked); narrow before calling.
+    const ok = window.confirm(
+      "Processing is still running. Leaving now will pause it — any in-flight screenshots may need to be re-run from this stage. Leave anyway?",
+    );
+    if (ok) blocker.proceed();
+    else blocker.reset();
   }, [blocker]);
 
   // Deep-link stages must validate against the *active* list — PHI deep-links

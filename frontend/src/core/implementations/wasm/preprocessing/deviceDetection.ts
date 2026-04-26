@@ -32,6 +32,8 @@ export interface DeviceProfile {
   cropHeight?: number;
 }
 
+export type Orientation = "portrait" | "landscape";
+
 export interface DetectionResult {
   detected: boolean;
   model?: string;
@@ -41,7 +43,7 @@ export interface DetectionResult {
   dimensions: { width: number; height: number };
   needsCropping?: boolean;
   /** "portrait" if height >= width, else "landscape". Always populated. */
-  orientation: "portrait" | "landscape";
+  orientation: Orientation;
 }
 
 // ---------------------------------------------------------------------------
@@ -374,7 +376,7 @@ export function detectDevice(
   }
 
   // --- No match ---
-  const orientation: "portrait" | "landscape" = height >= width ? "portrait" : "landscape";
+  const orientation: Orientation = height >= width ? "portrait" : "landscape";
 
   if (!bestProfile || bestConfidence < 0.5) {
     return {

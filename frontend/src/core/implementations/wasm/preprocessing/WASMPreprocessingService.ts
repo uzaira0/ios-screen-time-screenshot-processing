@@ -357,6 +357,27 @@ export class WASMPreprocessingService implements IPreprocessingService {
     let completed = 0;
     options.onProgress?.(0, eligible.length);
 
+    // Shared failure recorder. Both the unbounded and serial paths use
+    // it. Wrapping the IDB write in its own try/catch is load-bearing:
+    // if updateScreenshot itself rejects (quota, version error), the
+    // unbounded path's post-allSettled walk would otherwise blow up
+    // partway through and leave subsequent rows with no recorded
+    // failure event.
+    const recordFailure = async (screenshot: Screenshot, reason: unknown): Promise<void> => {
+      console.error(`[WASM] ${stage} failed for screenshot ${screenshot.id}:`, reason);
+      try {
+        const pp = getPreprocessing(screenshot);
+        const updated = addEvent(pp, stage, SS.FAILED, {
+          error: reason instanceof Error ? reason.message : String(reason),
+        });
+        await this.storage.updateScreenshot(screenshot.id as number, {
+          processing_metadata: setPreprocessing(screenshot, updated),
+        });
+      } catch (writeErr) {
+        console.error(`[WASM] failed to record failure event for screenshot ${screenshot.id}:`, writeErr);
+      }
+    };
+
     // device_detection and cropping are I/O bound (IndexedDB reads +
     // canvas decode), not bound by any shared worker — fire all of
     // them at once and let the browser's own scheduler handle
@@ -366,42 +387,26 @@ export class WASMPreprocessingService implements IPreprocessingService {
       stage === "device_detection" || stage === "cropping";
 
     if (isUnboundedConcurrency) {
-      let lastReport = 0;
-      const recordResult = async (
-        screenshot: Screenshot,
-        result: PromiseSettledResult<void>,
-      ) => {
-        if (result.status === "fulfilled") {
-          completed++;
-        } else {
-          console.error(`[WASM] ${stage} failed for screenshot ${screenshot.id}:`, result.reason);
-          const pp = getPreprocessing(screenshot);
-          const updated = addEvent(pp, stage, SS.FAILED, {
-            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-          });
-          await this.storage.updateScreenshot(screenshot.id as number, {
-            processing_metadata: setPreprocessing(screenshot, updated),
-          });
-        }
-        // Throttle progress reporting to once every 50 ms — without
-        // this the onProgress callback fires 1000 times in a tight
-        // loop and dominates the work itself.
-        const now = performance.now();
-        if (now - lastReport > 50 || completed === eligible.length) {
-          lastReport = now;
-          options.onProgress?.(completed, eligible.length);
-        }
-      };
-
       const settled = await Promise.allSettled(
         eligible.map((screenshot) =>
           this.processStage(screenshot, stage, options),
         ),
       );
-
+      // Recording is bulk after the fact — all promises are already
+      // resolved/rejected, so the abort check that was here was dead.
+      // Walk results and record any failures sequentially so the IDB
+      // writes don't pile up.
+      const failures: Array<{ screenshot: Screenshot; reason: unknown }> = [];
       for (let i = 0; i < settled.length; i++) {
-        if (options.abortSignal?.aborted) break;
-        await recordResult(eligible[i]!, settled[i]!);
+        const result = settled[i]!;
+        if (result.status === "fulfilled") {
+          completed++;
+        } else {
+          failures.push({ screenshot: eligible[i]!, reason: result.reason });
+        }
+      }
+      for (const f of failures) {
+        await recordFailure(f.screenshot, f.reason);
       }
       options.onProgress?.(completed, eligible.length);
     } else {
@@ -415,14 +420,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
           await this.processStage(screenshot, stage, options);
           completed++;
         } catch (e) {
-          console.error(`[WASM] ${stage} failed for screenshot ${screenshot.id}:`, e);
-          const pp = getPreprocessing(screenshot);
-          const updated = addEvent(pp, stage, SS.FAILED, {
-            error: e instanceof Error ? e.message : String(e),
-          });
-          await this.storage.updateScreenshot(screenshot.id as number, {
-            processing_metadata: setPreprocessing(screenshot, updated),
-          });
+          await recordFailure(screenshot, e);
         }
         options.onProgress?.(completed, eligible.length);
         // Yield so the progress bar repaints between items

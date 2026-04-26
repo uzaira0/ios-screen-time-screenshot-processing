@@ -306,27 +306,36 @@ pub struct PhiWord {
     pub conf: i32,
 }
 
+/// Encode an RgbImage as BMP for handoff to Leptonica via
+/// `set_image_from_mem`.
+///
+/// We use BMP rather than PNG because the Leptonica WASM build is
+/// configured with -DENABLE_PNG=OFF / -DENABLE_ZLIB=OFF (and the
+/// Emscripten-port libpng/zlib aren't linked in), so leptess'
+/// pixReadMem refuses to decode PNG bytes with
+/// 'pixReadMemPng: function not present' and OCR silently returns
+/// 'Set image from mem failed: Failed to read image from memory'.
+/// BMP is built into Leptonica with no external lib dependency.
+#[cfg(feature = "ocr")]
+fn encode_for_leptess(img: &RgbImage) -> Result<Vec<u8>, ProcessingError> {
+    // BMP rows are padded to a multiple of 4 bytes; the 54-byte header
+    // is a fixed cost. Pre-allocate so the encoder doesn't reallocate
+    // during the write.
+    let row_bytes = ((img.width() as usize * 3 + 3) / 4) * 4;
+    let capacity = 54 + row_bytes * img.height() as usize;
+    let mut buf = Vec::with_capacity(capacity);
+    let encoder = image::codecs::bmp::BmpEncoder::new(&mut buf);
+    img.write_with_encoder(encoder)
+        .map_err(|e| ProcessingError::Ocr(format!("BMP encode failed: {e}")))?;
+    Ok(buf)
+}
+
 /// Run Tesseract on an image and return word-level results.
 ///
 /// Uses `set_image_from_mem` to avoid temp file I/O entirely.
 #[cfg(feature = "ocr")]
 pub fn run_tesseract(img: &RgbImage, psm: &str) -> Result<Vec<OcrWord>, ProcessingError> {
-    // Encode the image as BMP, not PNG. The Leptonica WASM build is
-    // configured with -DENABLE_PNG=OFF / -DENABLE_ZLIB=OFF (and the
-    // Emscripten-port libpng/zlib aren't linked in), so leptess'
-    // pixReadMem refuses to decode PNG bytes with
-    // 'pixReadMemPng: function not present' and OCR silently returns
-    // 'Set image from mem failed: Failed to read image from memory'
-    // — which is exactly the symptom in production.
-    //
-    // BMP is supported by Leptonica's built-in readers without any
-    // external library dependency, so it works regardless of how
-    // Leptonica was configured. The few extra bytes vs PNG are
-    // irrelevant — this is an in-memory transfer, not a network upload.
-    let mut bmp_buf = Vec::new();
-    let encoder = image::codecs::bmp::BmpEncoder::new(&mut bmp_buf);
-    img.write_with_encoder(encoder)
-        .map_err(|e| ProcessingError::Ocr(format!("BMP encode failed: {e}")))?;
+    let bmp_buf = encode_for_leptess(img)?;
 
     with_leptess(psm, |lt| {
         // Match the Python reference, which uses pytesseract's default
@@ -379,13 +388,7 @@ pub fn parse_tsv_words(lt: &mut leptess::LepTess) -> Result<Vec<OcrWord>, Proces
 /// (which `run_tesseract` already does).
 #[cfg(feature = "ocr")]
 pub fn run_phi_ocr_words(img: &RgbImage) -> Result<Vec<PhiWord>, ProcessingError> {
-    // Encode as BMP for the same reason as run_tesseract: the WASM
-    // Leptonica build has PNG support disabled, so PNG bytes can't be
-    // decoded by pixReadMem. BMP is built into Leptonica.
-    let mut bmp_buf = Vec::new();
-    let encoder = image::codecs::bmp::BmpEncoder::new(&mut bmp_buf);
-    img.write_with_encoder(encoder)
-        .map_err(|e| ProcessingError::Ocr(format!("BMP encode failed: {e}")))?;
+    let bmp_buf = encode_for_leptess(img)?;
 
     with_leptess("3", |lt| {
         // Clear any whitelist a previous digit-only call left behind.

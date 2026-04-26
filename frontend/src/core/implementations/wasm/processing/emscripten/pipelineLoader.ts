@@ -86,7 +86,7 @@ const OUTPUT_BUFFER_SIZE = 65536; // 64 KB — enough for any JSON result
 async function loadModule(): Promise<EmscriptenModule> {
   if (modulePromise) return modulePromise;
 
-  modulePromise = (async () => {
+  const promise = (async () => {
     const scriptUrl = `${BASE}IosScreenTimePipeline.js`;
 
     let factory: (opts: object) => Promise<EmscriptenModule>;
@@ -126,20 +126,45 @@ async function loadModule(): Promise<EmscriptenModule> {
     });
 
     // Tesseract's strict convention is to search at
-    // ${TESSDATA_PREFIX}/tessdata/eng.traineddata. Some build/version
-    // combinations also fall back to ${TESSDATA_PREFIX}/eng.traineddata,
-    // but the conventional path is the one that consistently works
-    // across leptess/libtesseract revisions. Mount the file at both
-    // locations so neither resolution path can silently fail.
-    mod.FS.mkdir("/tesseract");
-    mod.FS.mkdir("/tesseract/tessdata");
+    // ${TESSDATA_PREFIX}/tessdata/eng.traineddata. Some leptess/libtesseract
+    // revisions also fall back to ${TESSDATA_PREFIX}/eng.traineddata, so we
+    // expose both. Use FS.symlink for the second path so the ~22 MB buffer
+    // is written exactly once instead of duplicated. mkdir() throws EEXIST
+    // if the directory is already there (across HMR or repeated calls in
+    // dev), so guard each one.
+    const tryMkdir = (path: string) => {
+      try { mod.FS.mkdir(path); } catch (e) {
+        const err = e as { code?: string };
+        if (err?.code !== "EEXIST") throw e;
+      }
+    };
+    tryMkdir("/tesseract");
+    tryMkdir("/tesseract/tessdata");
     const buf = new Uint8Array(tessdata);
     mod.FS.writeFile("/tesseract/tessdata/eng.traineddata", buf);
-    mod.FS.writeFile("/tesseract/eng.traineddata", buf);
+    try {
+      mod.FS.symlink("/tesseract/tessdata/eng.traineddata", "/tesseract/eng.traineddata");
+    } catch (e) {
+      const err = e as { code?: string };
+      // EEXIST means a previous load already created it; safe to ignore.
+      // Anything else: fall back to a second writeFile so OCR still works.
+      if (err?.code !== "EEXIST") {
+        console.warn("[pipelineLoader] symlink failed, falling back to duplicate write:", e);
+        mod.FS.writeFile("/tesseract/eng.traineddata", buf);
+      }
+    }
 
     return mod;
   })();
 
+  // Cache the in-flight promise so concurrent callers share it, but on
+  // rejection clear the cache so the NEXT call retries. Without this
+  // clear, a transient fetch failure (offline blip, stale cache) sticks
+  // forever and every OCR call returns the same rejection.
+  modulePromise = promise.catch((err) => {
+    modulePromise = null;
+    throw err;
+  });
   return modulePromise;
 }
 

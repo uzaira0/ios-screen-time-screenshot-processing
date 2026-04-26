@@ -118,6 +118,9 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
       case "EXTRACT_TITLE": {
         const p = payload as ExtractTitleMessage["payload"];
         const result = await emExtractOcr(p.imageData);
+        if (result.ocr_error) {
+          console.warn("[imageProcessor.worker] OCR error from extract_ocr (title):", result.ocr_error);
+        }
         self.postMessage({ type: "EXTRACT_TITLE_COMPLETE", id, payload: { title: result.title ?? null } });
         break;
       }
@@ -125,6 +128,9 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
       case "EXTRACT_TOTAL": {
         const p = payload as ExtractTotalMessage["payload"];
         const result = await emExtractOcr(p.imageData);
+        if (result.ocr_error) {
+          console.warn("[imageProcessor.worker] OCR error from extract_ocr (total):", result.ocr_error);
+        }
         self.postMessage({ type: "EXTRACT_TOTAL_COMPLETE", id, payload: { total: result.total_text ?? null } });
         break;
       }
@@ -134,6 +140,9 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         const result = await emPipelineProcess(p.imageData, p.imageType ?? "screen_time", {
           gridCoordinates: p.gridCoordinates,
         });
+        if (result.ocr_error) {
+          console.warn("[imageProcessor.worker] OCR error from pipeline (hourly):", result.ocr_error);
+        }
         const hourlyData: HourlyData = hourlyValuesToData(result.hourly_values ?? Array(24).fill(0) as number[]);
         self.postMessage({ type: "EXTRACT_HOURLY_DATA_COMPLETE", id, payload: { hourlyData } });
         break;
