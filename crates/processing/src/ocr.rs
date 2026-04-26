@@ -318,17 +318,14 @@ pub fn run_tesseract(img: &RgbImage, psm: &str) -> Result<Vec<OcrWord>, Processi
         .map_err(|e| ProcessingError::Ocr(format!("PNG encode failed: {e}")))?;
 
     with_leptess(psm, |lt| {
-        // Whitelist needs every character that legitimately appears in a
-        // visible iOS screen-time app title or total-time string, otherwise
-        // Tesseract drops them and the spatial-filter pass treats the title
-        // as empty. Punctuation gap was the cause of titles like "Don't
-        // Disturb", "Photos & Videos", "Apple News+", "Mr. Beast" coming
-        // back blank.
-        lt.set_variable(
-            leptess::Variable::TesseditCharWhitelist,
-            "0123456789hmHM: ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'&+.,-",
-        )
-        .ok();
+        // Match the Python reference, which uses pytesseract's default
+        // (no character whitelist). Any whitelist drops characters that
+        // legitimately appear in app names — apostrophes, ampersands,
+        // accented letters, parentheses, slashes, etc. — and silently
+        // blanks the title. Tesseract's eng.traineddata is constrained
+        // enough on its own without a hand-curated allow-list.
+        lt.set_variable(leptess::Variable::TesseditCharWhitelist, "")
+            .ok();
         lt.set_image_from_mem(&png_buf)
             .map_err(|e| ProcessingError::Ocr(format!("Set image from mem failed: {e}")))?;
         lt.recognize();

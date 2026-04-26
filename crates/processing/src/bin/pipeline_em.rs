@@ -132,19 +132,19 @@ pub extern "C" fn pipeline_process(
             (r.success, r.bounds, r.confidence, r.error)
         };
 
-    // Crop to the header area (above the graph) before running OCR.
-    // Fallback to top 45% when grid detection didn't produce bounds.
-    let ocr_crop_h = if let Some(ref bounds) = grid_bounds_opt {
-        ((bounds.roi_y() as u32).saturating_add(20)).min(img.height())
-    } else {
-        ((img.height() as f64 * 0.45).ceil() as u32).min(img.height())
-    };
-    #[cfg_attr(not(feature = "ocr"), allow(unused_variables))]
-    let ocr_img = image::imageops::crop_imm(&img, 0, 0, img.width(), ocr_crop_h).to_image();
-
+    // Run OCR on the FULL image. The previous header-only pre-crop was a
+    // perf optimisation that diverged from the Python reference, which
+    // calls pytesseract.image_to_data on the full image. Pre-cropping
+    //   (a) drops daily-total page markers ("MOST USED", "CATEGORIES",
+    //       "ENTERTAINMENT", "EDUCATION", "INFORMATION", "READING") that
+    //       sit below the chart, so is_daily_total_page() under-counts
+    //       and the title for daily-total pages comes back as a regular
+    //       app name attempt instead of "Daily Total"; and
+    //   (b) starves PSM 3's auto layout analysis of context, which can
+    //       cause the INFO anchor word itself to be missed.
     // OCR is best-effort: failures leave title/total null but pipeline continues.
     #[cfg(feature = "ocr")]
-    let (title, mut total_text, ocr_error) = match ocr::find_title_and_total(&ocr_img) {
+    let (title, mut total_text, ocr_error) = match ocr::find_title_and_total(&img) {
         Ok((t, _, tot)) => (t, tot, None::<String>),
         Err(e) => (String::new(), String::new(), Some(e.to_string())),
     };
@@ -277,9 +277,9 @@ pub extern "C" fn pipeline_detect_grid(
 
 /// OCR-only extraction — no grid detection, no bar extraction.
 ///
-/// Crops the image to the top 45% (header region) and runs Tesseract to
-/// extract the title and total usage text. Used by EXTRACT_TITLE and
-/// EXTRACT_TOTAL to avoid the cost of full grid detection.
+/// Runs Tesseract on the full image to extract title and total usage
+/// text. Used by EXTRACT_TITLE and EXTRACT_TOTAL to skip grid detection
+/// and bar extraction when only the OCR fields are needed.
 #[no_mangle]
 pub extern "C" fn pipeline_extract_ocr(
     rgba_ptr: *const u8,
@@ -297,12 +297,11 @@ pub extern "C" fn pipeline_extract_ocr(
     };
     convert_dark_mode(&mut img);
 
-    let crop_h = ((img.height() as f64 * 0.45).ceil() as u32).min(img.height());
-    #[cfg_attr(not(feature = "ocr"), allow(unused_variables))]
-    let ocr_img = image::imageops::crop_imm(&img, 0, 0, img.width(), crop_h).to_image();
-
+    // Run OCR on the FULL image to match the Python reference. See the
+    // pipeline_process() function above for the rationale; the same
+    // divergence applied here.
     #[cfg(feature = "ocr")]
-    let (title, total_text, ocr_error) = match ocr::find_title_and_total(&ocr_img) {
+    let (title, total_text, ocr_error) = match ocr::find_title_and_total(&img) {
         Ok((t, _, tot)) => (t, tot, None::<String>),
         Err(e) => (String::new(), String::new(), Some(e.to_string())),
     };
