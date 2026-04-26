@@ -318,9 +318,15 @@ pub fn run_tesseract(img: &RgbImage, psm: &str) -> Result<Vec<OcrWord>, Processi
         .map_err(|e| ProcessingError::Ocr(format!("PNG encode failed: {e}")))?;
 
     with_leptess(psm, |lt| {
+        // Whitelist needs every character that legitimately appears in a
+        // visible iOS screen-time app title or total-time string, otherwise
+        // Tesseract drops them and the spatial-filter pass treats the title
+        // as empty. Punctuation gap was the cause of titles like "Don't
+        // Disturb", "Photos & Videos", "Apple News+", "Mr. Beast" coming
+        // back blank.
         lt.set_variable(
             leptess::Variable::TesseditCharWhitelist,
-            "0123456789hmHM: ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+            "0123456789hmHM: ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'&+.,-",
         )
         .ok();
         lt.set_image_from_mem(&png_buf)
@@ -534,8 +540,14 @@ fn extract_title(
     #[cfg(feature = "ocr")]
     {
         let (img_w, img_h) = img.dimensions();
+        // The title sits at a different absolute Y depending on display
+        // density: ~y=120 on iPhone SE / 8 (1334 tall), ~y=180 on a regular
+        // iPhone (2532 tall), ~y=240 on Pro Max (2778 tall). A hardcoded
+        // 200px ceiling silently misses titles on all the larger devices,
+        // so scale to image height: search the top 18% with a floor of
+        // 240px so small displays still get a usable region.
         let fb_y_start = 40u32.min(img_h);
-        let fb_y_end = 200u32.min(img_h); // Tighter vertical range
+        let fb_y_end = ((img_h as f64 * 0.18) as u32).max(240).min(img_h);
         let fb_x_start = 120u32.min(img_w);
         // Limit to 55% of image width to exclude right-side navigation text
         let fb_x_end = ((img_w as f64 * 0.55) as u32).min(img_w);

@@ -142,9 +142,16 @@ export const HomePage = () => {
         screenshotService.getGroups()
           .then((g) => setGroups(g ?? []))
           .catch((err) => console.error("Failed to refresh groups:", err));
+        // Drop the user where they actually need to be next. Sitting on
+        // the groups page after an upload is a dead-end — the only useful
+        // action from here is to start preprocessing the screenshots that
+        // were just loaded, so go straight there.
+        if (features.preprocessing) {
+          navigate("/preprocessing");
+        }
       }
     },
-    [screenshotService, imageType, groupName],
+    [screenshotService, imageType, groupName, navigate, features.preprocessing],
   );
 
   const handleDrop = useCallback(
