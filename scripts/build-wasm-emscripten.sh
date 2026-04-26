@@ -257,6 +257,7 @@ export BINDGEN_EXTRA_CLANG_ARGS=" \
   -DHAVE_LIBGIF=0 \
   -DHAVE_LIBUNGIF=0 \
   -DHAVE_LIBZ=0 \
+  -D__STDC_NO_ATOMICS__=1 \
   --target=$HOST_TRIPLE"
 
 # ── Step 5: cargo build ───────────────────────────────────────────────────────
