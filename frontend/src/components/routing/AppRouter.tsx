@@ -39,6 +39,7 @@ import { useFeatures } from "@/core/hooks/useServices";
 import { useAuth } from "@/hooks/useAuth";
 import { PreprocessingProvider } from "@/hooks/usePreprocessingWithDI";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { config } from "@/config";
 
 /** Per-route ErrorBoundary so a crash on one page doesn't blank the entire
  *  app. The App-level boundary still catches anything that escapes a route. */
@@ -60,11 +61,17 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   return <>{children}</>;
 };
 
-// Redirect authenticated users away from login page
+// Redirect authenticated users away from login page. In local mode there
+// is no login at all — the auto-auth bootstrap in App.tsx logs the user in
+// on mount, so this route should never render LoginPage either way.
 const LoginRoute: React.FC = () => {
   const { isAuthenticated } = useAuthStore();
 
   if (isAuthenticated) {
+    return <Navigate to="/" replace />;
+  }
+
+  if (config.isLocalMode) {
     return <Navigate to="/" replace />;
   }
 

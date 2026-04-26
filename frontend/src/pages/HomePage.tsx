@@ -47,8 +47,22 @@ export const HomePage = () => {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Scorer ID is the human label written into exported CSV rows. We collect
+  // it lazily at export time (not at app launch) and remember it locally so
+  // repeat exports don't re-prompt.
+  const [exportScorerOpen, setExportScorerOpen] = useState(false);
+  const [scorerId, setScorerId] = useState(() => {
+    try { return localStorage.getItem("scorerId") || ""; } catch { return ""; }
+  });
+
   const handleLoadFiles = useCallback(
     async (files: FileList | File[]) => {
+      const trimmedName = groupName.trim();
+      if (!trimmedName) {
+        toast.error("Enter a group name before uploading");
+        return;
+      }
+
       const imageFiles = Array.from(files).filter(isImageFile);
       if (imageFiles.length === 0) {
         toast.error("No image files found in selection");
@@ -59,17 +73,30 @@ export const HomePage = () => {
       setLoadProgress({ current: 0, total: imageFiles.length });
       const results = { loaded: 0, failed: 0, duplicates: 0 };
 
-      const BATCH_SIZE = 5;
+      // Per-file completion counter so the progress bar advances smoothly
+      // through all 1000 screenshots, not in chunky batch jumps.
+      let done = 0;
+      const tickProgress = (() => {
+        let scheduled = false;
+        return () => {
+          if (scheduled) return;
+          scheduled = true;
+          requestAnimationFrame(() => {
+            scheduled = false;
+            setLoadProgress({ current: done, total: imageFiles.length });
+          });
+        };
+      })();
+
+      const BATCH_SIZE = 16;
       for (let i = 0; i < imageFiles.length; i += BATCH_SIZE) {
         const batch = imageFiles.slice(i, i + BATCH_SIZE);
         await Promise.all(
           batch.map(async (file) => {
             try {
               const parsed = parseRelativePath(file);
-              const groupId = groupName.trim() || parsed.root_folder || undefined;
-
               await screenshotService.addScreenshots(file, imageType, {
-                ...(groupId && { groupId }),
+                groupId: trimmedName,
                 ...(parsed.participant_id !== "unknown" && { participantId: parsed.participant_id }),
                 ...(parsed.screenshot_date && { screenshotDate: parsed.screenshot_date }),
                 originalFilepath: parsed.original_filepath,
@@ -82,10 +109,12 @@ export const HomePage = () => {
                 results.failed++;
                 console.error(`Failed to load ${file.name}:`, error);
               }
+            } finally {
+              done++;
+              tickProgress();
             }
           }),
         );
-        setLoadProgress({ current: Math.min(i + BATCH_SIZE, imageFiles.length), total: imageFiles.length });
       }
 
       setIsLoadingFiles(false);
@@ -126,6 +155,61 @@ export const HomePage = () => {
     },
     [handleLoadFiles],
   );
+
+  // Use the File System Access API when available — Chrome shows ONE
+  // permission prompt per directory grant instead of the per-upload
+  // "Upload N files from this folder?" confirmation that <input
+  // webkitdirectory> triggers. Fall back to the input click on Firefox/
+  // Safari and any browser without showDirectoryPicker.
+  const handlePickFolder = useCallback(async () => {
+    if (!groupName.trim()) {
+      toast.error("Enter a group name first");
+      return;
+    }
+    type DirHandle = {
+      values(): AsyncIterable<{ kind: "file" | "directory"; getFile?(): Promise<File>; values?: DirHandle["values"] }>;
+    };
+    const w = window as unknown as { showDirectoryPicker?: () => Promise<DirHandle> };
+    if (typeof w.showDirectoryPicker !== "function") {
+      fileInputRef.current?.click();
+      return;
+    }
+    let dir: DirHandle;
+    try {
+      dir = await w.showDirectoryPicker();
+    } catch (err) {
+      if ((err as DOMException)?.name === "AbortError") return;
+      console.error("showDirectoryPicker failed:", err);
+      fileInputRef.current?.click();
+      return;
+    }
+    const files: File[] = [];
+    const walk = async (d: DirHandle, prefix: string) => {
+      for await (const entry of d.values()) {
+        if (entry.kind === "file" && entry.getFile) {
+          const f = await entry.getFile();
+          // Synthesize webkitRelativePath so parseRelativePath keeps working
+          Object.defineProperty(f, "webkitRelativePath", {
+            value: prefix ? `${prefix}/${f.name}` : f.name,
+            configurable: true,
+          });
+          files.push(f);
+        } else if (entry.kind === "directory" && entry.values) {
+          // Use the picked dir's own name only at the top level; nested
+          // dirs are addressed by their own entry name.
+          const nestedName = (entry as unknown as { name: string }).name;
+          await walk(entry as DirHandle, prefix ? `${prefix}/${nestedName}` : nestedName);
+        }
+      }
+    };
+    const rootName = (dir as unknown as { name: string }).name ?? "";
+    await walk(dir, rootName);
+    if (files.length === 0) {
+      toast.error("No files in selected folder");
+      return;
+    }
+    handleLoadFiles(files);
+  }, [groupName, handleLoadFiles]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -235,9 +319,30 @@ export const HomePage = () => {
     }
   };
 
-  const handleExport = async () => {
+  const handleExportClick = () => {
+    // Prompt for scorer ID before producing the file. In server mode the
+    // backend already knows who you are, so skip the prompt there.
+    if (config.isLocalMode) {
+      setExportScorerOpen(true);
+      return;
+    }
+    void runExport();
+  };
+
+  const runExport = async () => {
     setIsExporting(true);
     try {
+      const trimmed = scorerId.trim();
+      if (config.isLocalMode && trimmed) {
+        try { localStorage.setItem("scorerId", trimmed); } catch { /* ignore */ }
+        // Bind the username used by all CSV-row attribution to the scorer
+        // ID the user just typed, without forcing a logout/login cycle.
+        const auth = (await import("@/store/authStore")).useAuthStore.getState();
+        if (auth.username !== trimmed) {
+          auth.login(auth.userId ?? 1, trimmed, undefined, auth.role ?? "admin");
+        }
+      }
+
       const csvData = await screenshotService.exportCSV();
       const timestamp = new Date()
         .toISOString()
@@ -256,6 +361,7 @@ export const HomePage = () => {
       document.body.removeChild(a);
 
       toast.success("Exported as CSV");
+      setExportScorerOpen(false);
     } catch (error) {
       if (config.isDev) {
         console.error("Export failed:", error);
@@ -313,10 +419,28 @@ export const HomePage = () => {
                       e.target.value = "";
                     }}
                   />
+                  <input
+                    type="text"
+                    value={groupName}
+                    onChange={(e) => setGroupName(e.target.value)}
+                    placeholder="Group name (required)"
+                    aria-label="Group name"
+                    className="text-sm border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 w-44 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  />
+                  <select
+                    value={imageType}
+                    onChange={(e) => setImageType(e.target.value as ImageType)}
+                    className="text-sm border border-slate-300 dark:border-slate-600 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                    aria-label="Image type"
+                  >
+                    <option value="screen_time">Screen Time</option>
+                    <option value="battery">Battery</option>
+                  </select>
                   <Button
                     variant="primary"
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={handlePickFolder}
                     loading={isLoadingFiles}
+                    disabled={!groupName.trim() || isLoadingFiles}
                     icon={<FolderOpen className="h-4 w-4" />}
                   >
                     {isLoadingFiles ? "Loading..." : config.isLocalMode ? "Load Folder" : "Add Folder"}
@@ -326,7 +450,7 @@ export const HomePage = () => {
               {isAuthenticated && groups.length > 0 && (
                 <Button
                   variant="secondary"
-                  onClick={handleExport}
+                  onClick={handleExportClick}
                   loading={isExporting}
                   icon={<Download className="h-4 w-4" />}
                   aria-label="Export CSV"
@@ -399,26 +523,11 @@ export const HomePage = () => {
               {isAuthenticated ? (
                 <div className="max-w-sm mx-auto space-y-3">
                   <p className="text-slate-600 dark:text-slate-400 text-sm">
-                    Drop a folder here or use the button above.
+                    {groupName.trim()
+                      ? "Drop a folder here or use the button above."
+                      : "Enter a group name above, then drop a folder here or use the Load Folder button."}
                   </p>
                   <FolderStructureHint />
-                  <div className="flex items-center gap-2 justify-center">
-                    <input
-                      type="text"
-                      value={groupName}
-                      onChange={(e) => setGroupName(e.target.value)}
-                      placeholder="Group name override (optional)"
-                      className="text-sm border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 w-52"
-                    />
-                    <select
-                      value={imageType}
-                      onChange={(e) => setImageType(e.target.value as ImageType)}
-                      className="text-sm border border-slate-300 dark:border-slate-600 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300"
-                    >
-                      <option value="screen_time">Screen Time</option>
-                      <option value="battery">Battery</option>
-                    </select>
-                  </div>
                 </div>
               ) : (
                 <p className="text-slate-600 dark:text-slate-400">
@@ -697,6 +806,49 @@ export const HomePage = () => {
           </div>
         )}
       </div>
+
+      {/* Scorer ID prompt — fires on export in local mode. The same field
+          could be filled at any future export; we remember the answer in
+          localStorage so re-exports skip the typing. */}
+      <Modal
+        open={exportScorerOpen}
+        onOpenChange={(open) => { if (!open) setExportScorerOpen(false); }}
+        title="Scorer ID"
+        size="sm"
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
+          Identifies who produced these annotations in the exported CSV.
+          Enter your initials, name, or any label you use for cross-rater
+          comparison.
+        </p>
+        <input
+          type="text"
+          value={scorerId}
+          onChange={(e) => setScorerId(e.target.value)}
+          placeholder="e.g. JD, rater-1, alice"
+          className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500 mb-4"
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && scorerId.trim()) {
+              e.preventDefault();
+              void runExport();
+            }
+          }}
+        />
+        <div className="flex justify-end gap-3">
+          <Button variant="ghost" onClick={() => setExportScorerOpen(false)} disabled={isExporting}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={runExport}
+            loading={isExporting}
+            disabled={!scorerId.trim()}
+          >
+            {isExporting ? "Exporting..." : "Export CSV"}
+          </Button>
+        </div>
+      </Modal>
 
       {/* Pending screenshots warning modal */}
       <Modal
