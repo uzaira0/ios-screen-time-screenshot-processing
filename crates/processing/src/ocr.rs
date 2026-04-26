@@ -476,8 +476,14 @@ fn extract_title(
         let title_x_start = (info.x as f64 + 1.5 * info.w as f64) as i32;
         // Match canvas: xWidth = xOrigin + infoWidth * 12, limited to image boundary
         let title_x_end = (title_x_start + info.w * 12).min(img_w as i32);
-        // Limit height to 4x INFO height to avoid picking up text below the title
-        let title_y_end = title_y_start + info.h * 4;
+        // Match the Python reference: app_height = info.h * 7. The
+        // previous value (info.h * 4) was a Rust-only deviation that
+        // cropped the title row entirely on Pro Max-class displays where
+        // the app-name baseline sits roughly six INFO-heights below INFO.
+        // The deleted TS canvas port followed the Rust value instead of
+        // source-of-truth Python, which is why both ports were silently
+        // blanking titles.
+        let title_y_end = title_y_start + info.h * 7;
 
         // Canvas always crops the title region + applies 2× contrast + re-OCRs.
         // No spatial fast path — canvas never reuses full-image OCR words for title.
@@ -521,7 +527,12 @@ fn extract_title(
                 )
                 .to_image();
                 let region_enhanced = adjust_contrast_brightness(&region, 2.0, 0);
-                let words = run_tesseract(&region_enhanced, "6")?;
+                // Python reference uses PSM 3 (auto layout) for the title
+                // re-OCR; Rust used to use PSM 6 (single uniform block),
+                // which expects multi-line layout and fails on the
+                // single-line title crops produced by tall iPhones. Match
+                // Python.
+                let words = run_tesseract(&region_enhanced, "3")?;
 
                 let title = words_to_title_text(words.iter());
 
@@ -536,21 +547,20 @@ fn extract_title(
         }
     }
 
-    // Fallback: no "INFO" found — use constrained region (native re-OCR only).
+    // Fallback: no "INFO" found — match the Python reference exactly.
+    // Python uses `info_rect = [40, 300, 120, 2000]` then numpy-slices
+    // `img[info_rect[0]:info_rect[2], info_rect[1]:info_rect[3]]`, which
+    // is `img[y=40:120, x=300:2000]` — an 80-px-tall horizontal strip
+    // starting at x=300, clamped to the image width. Both Rust and the
+    // deleted TS port had previously invented their own constants here
+    // (40..200 × 120..0.55w) which doesn't match source-of-truth.
     #[cfg(feature = "ocr")]
     {
         let (img_w, img_h) = img.dimensions();
-        // The title sits at a different absolute Y depending on display
-        // density: ~y=120 on iPhone SE / 8 (1334 tall), ~y=180 on a regular
-        // iPhone (2532 tall), ~y=240 on Pro Max (2778 tall). A hardcoded
-        // 200px ceiling silently misses titles on all the larger devices,
-        // so scale to image height: search the top 18% with a floor of
-        // 240px so small displays still get a usable region.
         let fb_y_start = 40u32.min(img_h);
-        let fb_y_end = ((img_h as f64 * 0.18) as u32).max(240).min(img_h);
-        let fb_x_start = 120u32.min(img_w);
-        // Limit to 55% of image width to exclude right-side navigation text
-        let fb_x_end = ((img_w as f64 * 0.55) as u32).min(img_w);
+        let fb_y_end = 120u32.min(img_h);
+        let fb_x_start = 300u32.min(img_w);
+        let fb_x_end = 2000u32.min(img_w);
 
         if fb_x_end > fb_x_start && fb_y_end > fb_y_start {
             let region = image::imageops::crop_imm(
@@ -562,7 +572,7 @@ fn extract_title(
             )
             .to_image();
             let region_enhanced = adjust_contrast_brightness(&region, 2.0, 0);
-            let words = run_tesseract(&region_enhanced, "6")?;
+            let words = run_tesseract(&region_enhanced, "3")?;
 
             let title = words_to_title_text(words.iter());
             if !title.is_empty() && title.len() <= 50 {
@@ -691,8 +701,13 @@ fn extract_total(img: &RgbImage, ocr_data: &[OcrWord]) -> Result<String, Process
 pub fn find_title_and_total(
     img: &RgbImage,
 ) -> Result<(String, Option<i32>, String), ProcessingError> {
-    // Run Tesseract ONCE on the full image
-    let ocr_data = run_tesseract(img, "6")?;
+    // Run Tesseract ONCE on the full image. PSM 3 (auto layout) matches
+    // the Python reference (`pytesseract.image_to_data(img, config="--psm 3")`)
+    // and is what reliably segments the page into label words like INFO
+    // and SCREEN that the spatial filter downstream depends on. PSM 6
+    // (single uniform block) treats the whole header as one paragraph and
+    // can drop those anchor words on tall displays.
+    let ocr_data = run_tesseract(img, "3")?;
 
     // Extract title and total using the cached OCR data.
     // Pass the full image for the title crop fallback (needs full-res pixels).
