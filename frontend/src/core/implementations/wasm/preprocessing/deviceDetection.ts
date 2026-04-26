@@ -40,6 +40,8 @@ export interface DetectionResult {
   confidence: number;
   dimensions: { width: number; height: number };
   needsCropping?: boolean;
+  /** "portrait" if height >= width, else "landscape". Always populated. */
+  orientation: "portrait" | "landscape";
 }
 
 // ---------------------------------------------------------------------------
@@ -372,12 +374,15 @@ export function detectDevice(
   }
 
   // --- No match ---
+  const orientation: "portrait" | "landscape" = height >= width ? "portrait" : "landscape";
+
   if (!bestProfile || bestConfidence < 0.5) {
     return {
       detected: false,
       category: "unknown",
       confidence: 0,
       dimensions: { width, height },
+      orientation,
     };
   }
 
@@ -396,5 +401,6 @@ export function detectDevice(
     confidence: bestConfidence,
     dimensions: { width, height },
     needsCropping,
+    orientation,
   };
 }

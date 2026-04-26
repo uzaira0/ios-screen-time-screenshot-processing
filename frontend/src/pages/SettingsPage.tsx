@@ -27,6 +27,26 @@ import { useThemeStore, THEME_OPTIONS } from "@/store/themeStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { Card } from "@/components/ui/Card";
 import { Toggle } from "@/components/ui/Toggle";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+
+/** One failing section shouldn't wipe the entire settings page. Wrap each
+ *  card so a thrown error renders a small inline message and the rest of
+ *  the page still works. */
+function Section({ children }: { children: React.ReactNode }) {
+  return (
+    <ErrorBoundary
+      fallback={
+        <Card padding="lg">
+          <p className="text-sm text-red-600 dark:text-red-400">
+            This section failed to load. Other settings still work; reload to retry.
+          </p>
+        </Card>
+      }
+    >
+      {children}
+    </ErrorBoundary>
+  );
+}
 
 function SyncSection() {
   const {
@@ -721,16 +741,16 @@ export const SettingsPage: React.FC = () => {
         </Card>
 
         {/* Processing settings */}
-        <ProcessingSection />
+        <Section><ProcessingSection /></Section>
 
         {/* PHI Detection settings (server mode only) */}
-        {!isLocalMode && <PHISection />}
+        {!isLocalMode && <Section><PHISection /></Section>}
 
         {/* Sync section (WASM mode only) */}
-        {isLocalMode && <SyncSection />}
+        {isLocalMode && <Section><SyncSection /></Section>}
 
         {/* Local storage management (WASM mode only) */}
-        {isLocalMode && <StorageSection />}
+        {isLocalMode && <Section><StorageSection /></Section>}
 
 
         {/* About Section */}

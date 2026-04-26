@@ -311,6 +311,19 @@ export class WASMPreprocessingService implements IPreprocessingService {
       };
     }
 
+    // Always reconcile stuck 'running' rows before we start. The store
+    // also calls reconcileStuckStages() on first loadSummary, but that's
+    // only once-per-session — if a user starts a run, navigates away
+    // mid-batch, comes back without a full reload, and clicks Run again,
+    // any rows we never finished writing on the way out would still be
+    // 'running' and therefore not eligible. Reconciling at runStage entry
+    // makes a re-run idempotent.
+    try {
+      await this.reconcileStuckStages();
+    } catch (e) {
+      console.warn("[WASM] reconcileStuckStages on runStage entry failed:", e);
+    }
+
     // Get eligible screenshots
     let screenshots: Screenshot[];
     if (options.screenshot_ids?.length) {
@@ -348,8 +361,15 @@ export class WASMPreprocessingService implements IPreprocessingService {
     let completed = 0;
     options.onProgress?.(0, eligible.length);
 
+    // Device detection is pure CPU on a tiny dimension lookup; cropping is
+    // canvas decode + small canvas draw. Both are bounded by the IndexedDB
+    // round-trips, not by any shared worker. The previous BATCH_SIZE of 8
+    // was conservative — bumping cropping to 32 lets the browser keep the
+    // canvas pipeline saturated and turns 1000-screenshot crops from
+    // multi-minute into seconds. PHI stages stay sequential because they
+    // share a single Tesseract/NER worker.
     const isBatchable = stage === "device_detection" || stage === "cropping";
-    const BATCH_SIZE = isBatchable ? 8 : 1;
+    const BATCH_SIZE = stage === "device_detection" ? 32 : isBatchable ? 16 : 1;
 
     for (let i = 0; i < eligible.length; i += BATCH_SIZE) {
       if (options.abortSignal?.aborted) break;
@@ -367,7 +387,12 @@ export class WASMPreprocessingService implements IPreprocessingService {
           const screenshot = batch[j]!;
           console.error(`[WASM] ${stage} failed for screenshot ${screenshot.id}:`, result.reason);
           const pp = getPreprocessing(screenshot);
-          const updated = addEvent(pp, stage, "exception", {
+          // Use 'failed' (a known StageStatus) so the next runStage picks it
+// back up. Writing a bare 'exception' string here was leaving the
+// screenshot in a stage_status the eligibility filter doesn't accept,
+// which is why an interrupted run looked unrecoverable without a
+// full stage reset.
+const updated = addEvent(pp, stage, SS.FAILED, {
             error: result.reason instanceof Error ? result.reason.message : String(result.reason),
           });
           await this.storage.updateScreenshot(screenshot.id as number, {
@@ -431,6 +456,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
           device_family: result.family ?? "unknown",
           device_category: result.category,
           confidence: result.confidence,
+          orientation: result.orientation,
           dimensions: { width, height },
           needs_cropping: result.needsCropping ?? false,
         });

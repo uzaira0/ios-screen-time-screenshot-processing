@@ -18,16 +18,30 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { UploadPage } from "@/pages/UploadPage";
 import { HelpPage } from "@/pages/HelpPage";
 
-// Lazy-load heavy pages
-const AdminPage = React.lazy(() =>
+// Lazy-load heavy pages. We attach a `.preload()` hook to each one and
+// fire them all from a requestIdleCallback after the initial paint, so
+// by the time the user actually clicks a Link the chunk is already
+// in cache. This is what kills the "click → blank → spinner → page"
+// stutter that read as 'navigation lag'.
+function lazyWithPreload<T extends { default: React.ComponentType<unknown> }>(
+  loader: () => Promise<T>,
+): React.LazyExoticComponent<T["default"]> & { preload: () => Promise<T> } {
+  const Lazy = React.lazy(loader) as React.LazyExoticComponent<T["default"]> & {
+    preload: () => Promise<T>;
+  };
+  Lazy.preload = loader;
+  return Lazy;
+}
+
+const AdminPage = lazyWithPreload(() =>
   import("@/pages/AdminPage").then((m) => ({ default: m.AdminPage })),
 );
-const ConsensusComparisonPage = React.lazy(() =>
+const ConsensusComparisonPage = lazyWithPreload(() =>
   import("@/pages/ConsensusComparisonPage").then((m) => ({
     default: m.ConsensusComparisonPage,
   })),
 );
-const PreprocessingPage = React.lazy(() =>
+const PreprocessingPage = lazyWithPreload(() =>
   import("@/pages/PreprocessingPage").then((m) => ({
     default: m.PreprocessingPage,
   })),
@@ -100,6 +114,23 @@ const AdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
 export const AppRouter: React.FC = () => {
   const features = useFeatures();
+
+  // Preload route chunks once the browser is idle so the first
+  // navigation doesn't pay the chunk-fetch latency. Each .preload() is
+  // idempotent — it just returns the same import promise.
+  React.useEffect(() => {
+    const w = window as unknown as { requestIdleCallback?: (cb: () => void) => number };
+    const run = () => {
+      void PreprocessingPage.preload();
+      if (features.consensusComparison) void ConsensusComparisonPage.preload();
+      if (features.admin) void AdminPage.preload();
+    };
+    if (typeof w.requestIdleCallback === "function") {
+      w.requestIdleCallback(run);
+    } else {
+      setTimeout(run, 1500);
+    }
+  }, [features.admin, features.consensusComparison]);
 
   return (
     <Routes>
