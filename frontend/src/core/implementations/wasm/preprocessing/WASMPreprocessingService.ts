@@ -354,56 +354,80 @@ export class WASMPreprocessingService implements IPreprocessingService {
       return { queued_count: 0, message: `No eligible screenshots for ${stage.replace(/_/g, " ")}` };
     }
 
-    // Process screenshots, yielding to the browser for progress updates.
-    // Device detection and cropping are parallelized in batches since they're
-    // I/O-bound (IndexedDB reads) not CPU-bound. PHI stages stay sequential
-    // because they use shared Tesseract/NER workers.
     let completed = 0;
     options.onProgress?.(0, eligible.length);
 
-    // Device detection is pure CPU on a tiny dimension lookup; cropping is
-    // canvas decode + small canvas draw. Both are bounded by the IndexedDB
-    // round-trips, not by any shared worker. The previous BATCH_SIZE of 8
-    // was conservative — bumping cropping to 32 lets the browser keep the
-    // canvas pipeline saturated and turns 1000-screenshot crops from
-    // multi-minute into seconds. PHI stages stay sequential because they
-    // share a single Tesseract/NER worker.
-    const isBatchable = stage === "device_detection" || stage === "cropping";
-    const BATCH_SIZE = stage === "device_detection" ? 32 : isBatchable ? 16 : 1;
+    // device_detection and cropping are I/O bound (IndexedDB reads +
+    // canvas decode), not bound by any shared worker — fire all of
+    // them at once and let the browser's own scheduler handle
+    // ordering. PHI stages still serialize because they share a
+    // single Tesseract/NER worker per browser tab.
+    const isUnboundedConcurrency =
+      stage === "device_detection" || stage === "cropping";
 
-    for (let i = 0; i < eligible.length; i += BATCH_SIZE) {
-      if (options.abortSignal?.aborted) break;
-      const batch = eligible.slice(i, i + BATCH_SIZE);
-
-      const results = await Promise.allSettled(
-        batch.map((screenshot) => this.processStage(screenshot, stage, options)),
-      );
-
-      for (let j = 0; j < results.length; j++) {
-        const result = results[j]!;
+    if (isUnboundedConcurrency) {
+      let lastReport = 0;
+      const recordResult = async (
+        screenshot: Screenshot,
+        result: PromiseSettledResult<void>,
+      ) => {
         if (result.status === "fulfilled") {
           completed++;
         } else {
-          const screenshot = batch[j]!;
           console.error(`[WASM] ${stage} failed for screenshot ${screenshot.id}:`, result.reason);
           const pp = getPreprocessing(screenshot);
-          // Use 'failed' (a known StageStatus) so the next runStage picks it
-// back up. Writing a bare 'exception' string here was leaving the
-// screenshot in a stage_status the eligibility filter doesn't accept,
-// which is why an interrupted run looked unrecoverable without a
-// full stage reset.
-const updated = addEvent(pp, stage, SS.FAILED, {
+          const updated = addEvent(pp, stage, SS.FAILED, {
             error: result.reason instanceof Error ? result.reason.message : String(result.reason),
           });
           await this.storage.updateScreenshot(screenshot.id as number, {
             processing_metadata: setPreprocessing(screenshot, updated),
           });
         }
-      }
+        // Throttle progress reporting to once every 50 ms — without
+        // this the onProgress callback fires 1000 times in a tight
+        // loop and dominates the work itself.
+        const now = performance.now();
+        if (now - lastReport > 50 || completed === eligible.length) {
+          lastReport = now;
+          options.onProgress?.(completed, eligible.length);
+        }
+      };
 
+      const settled = await Promise.allSettled(
+        eligible.map((screenshot) =>
+          this.processStage(screenshot, stage, options),
+        ),
+      );
+
+      for (let i = 0; i < settled.length; i++) {
+        if (options.abortSignal?.aborted) break;
+        await recordResult(eligible[i]!, settled[i]!);
+      }
       options.onProgress?.(completed, eligible.length);
-      // Yield to browser so the progress bar repaints
-      await new Promise<void>((r) => { setTimeout(r, 0); });
+    } else {
+      // OCR + PHI: must serialize because they share a worker. Fall
+      // through to the original one-at-a-time path so onProgress ticks
+      // per screenshot and we can abort cleanly between items.
+      for (let i = 0; i < eligible.length; i++) {
+        if (options.abortSignal?.aborted) break;
+        const screenshot = eligible[i]!;
+        try {
+          await this.processStage(screenshot, stage, options);
+          completed++;
+        } catch (e) {
+          console.error(`[WASM] ${stage} failed for screenshot ${screenshot.id}:`, e);
+          const pp = getPreprocessing(screenshot);
+          const updated = addEvent(pp, stage, SS.FAILED, {
+            error: e instanceof Error ? e.message : String(e),
+          });
+          await this.storage.updateScreenshot(screenshot.id as number, {
+            processing_metadata: setPreprocessing(screenshot, updated),
+          });
+        }
+        options.onProgress?.(completed, eligible.length);
+        // Yield so the progress bar repaints between items
+        await new Promise<void>((r) => { setTimeout(r, 0); });
+      }
     }
 
     // Clean up workers after PHI detection batch
