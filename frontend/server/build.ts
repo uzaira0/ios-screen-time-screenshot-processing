@@ -199,15 +199,17 @@ async function build() {
     console.log("  \x1b[32m✓\x1b[0m sw.js");
   }
 
-  // Build Tailwind CSS (v4)
+  // Build Tailwind CSS (v4) — invoke installed CLI binary directly. `bunx`
+  // resolution misbehaves on Linux CI and lands on the wrong binary, which
+  // rejects `-i` silently. Calling node_modules/.bin/tailwindcss avoids that.
   console.log("\n\x1b[33m[build]\x1b[0m Building CSS...");
+  const tailwindBin = join(ROOT_DIR, "node_modules", ".bin", "tailwindcss");
   const cssProc = Bun.spawn(
     [
-      "bunx",
-      "@tailwindcss/cli",
-      "-i",
+      tailwindBin,
+      "--input",
       join(SRC_DIR, "index.css"),
-      "-o",
+      "--output",
       join(DIST_DIR, "assets", "index.css"),
       "--minify",
     ],
@@ -217,7 +219,10 @@ async function build() {
       stderr: "inherit",
     }
   );
-  await cssProc.exited;
+  const cssExitCode = await cssProc.exited;
+  if (cssExitCode !== 0) {
+    throw new Error(`Tailwind CLI failed with exit code ${cssExitCode}`);
+  }
 
   // Copy public files
   console.log("\n\x1b[33m[build]\x1b[0m Copying public files...");
