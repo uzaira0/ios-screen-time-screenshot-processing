@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import type { HourlyData, Consensus } from "@/types";
 import clsx from "clsx";
 
@@ -10,7 +10,7 @@ interface HourlyUsageEditorProps {
   title?: string;
 }
 
-export const HourlyUsageEditor = ({
+const HourlyUsageEditorInner = ({
   data,
   onChange,
   consensus,
@@ -154,3 +154,5 @@ export const HourlyUsageEditor = ({
     </div>
   );
 };
+
+export const HourlyUsageEditor = memo(HourlyUsageEditorInner);

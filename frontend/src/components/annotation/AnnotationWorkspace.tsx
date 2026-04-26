@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useNavigate, Link } from "react-router";
 import { useAnnotation } from "@/hooks/useAnnotationWithDI";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
@@ -38,6 +38,11 @@ import { config } from "@/config";
 type ProcessingMethod = "ocr_anchored" | "line_based";
 
 export type GraphDisplayMode = "separate" | "overlay";
+
+/** Module-level frozen empty object so every component that reads
+ *  `hourlyValues` while annotation is still loading sees the same
+ *  reference instead of a fresh `{}` per workspace render. */
+const EMPTY_HOURLY: Record<number, number> = Object.freeze({}) as Record<number, number>;
 
 interface AnnotationWorkspaceProps {
   groupId?: string | undefined;
@@ -90,6 +95,19 @@ export const AnnotationWorkspace = ({
 
   const [imageRefreshKey, setImageRefreshKey] = useState(0);
   const imageUrl = useScreenshotImage(screenshot?.id || 0, imageRefreshKey);
+
+  // Stabilize the data references that get passed into the heavy
+  // overlay/editor children. The previous inline `annotation?.hourly_values || {}`
+  // and `... || null` literals minted a fresh `{}` / `null` reference
+  // on every workspace render — which made HourlyUsageOverlay (canvas
+  // redraw + image reload) and the editor rerender even when nothing
+  // about their inputs had actually changed. Each navigation churned
+  // them four or five times in a row.
+  const hourlyValues = useMemo(
+    () => annotation?.hourly_values ?? EMPTY_HOURLY,
+    [annotation?.hourly_values],
+  );
+  const gridCoords = annotation?.grid_coords ?? null;
 
   const [notes, setNotes] = useState("");
   const [displayMode, setDisplayMode] = useState<GraphDisplayMode>(() => {
@@ -506,7 +524,7 @@ export const AnnotationWorkspace = ({
               <GridSelector
                 imageUrl={imageUrl}
                 onGridSelect={handleGridSelect}
-                initialCoords={annotation?.grid_coords}
+                initialCoords={gridCoords ?? undefined}
                 disabled={isVerifiedByMe}
                 imageType={screenshot.image_type}
                 extractedTitle={screenshot.extracted_title}
@@ -586,10 +604,10 @@ export const AnnotationWorkspace = ({
                 <Skeleton className="w-full" height="12rem" />
               ) : displayMode === "overlay" ? (
                 <HourlyUsageOverlay
-                  data={annotation?.hourly_values || {}}
+                  data={hourlyValues}
                   onChange={updateHour}
                   imageUrl={imageUrl}
-                  gridCoords={annotation?.grid_coords || null}
+                  gridCoords={gridCoords}
                   {...(consensus ? { consensus } : {})}
                   readOnly={isVerifiedByMe}
                 />
@@ -597,11 +615,11 @@ export const AnnotationWorkspace = ({
                 <>
                   <CroppedGraphViewer
                     imageUrl={imageUrl}
-                    gridCoords={annotation?.grid_coords || null}
+                    gridCoords={gridCoords}
                     targetWidth={800}
                   />
                   <HourlyUsageEditor
-                    data={annotation?.hourly_values || {}}
+                    data={hourlyValues}
                     onChange={updateHour}
                     readOnly={isVerifiedByMe}
                   />
@@ -696,7 +714,7 @@ export const AnnotationWorkspace = ({
             {/* Totals Display */}
             <TotalsDisplay
               ocrTotal={screenshot.extracted_total}
-              hourlyData={annotation?.hourly_values || {}}
+              hourlyData={hourlyValues}
               isProcessing={isProcessing}
               onRecalculateOcr={handleRecalculateOcr}
               isRecalculatingOcr={isRecalculatingOcr}

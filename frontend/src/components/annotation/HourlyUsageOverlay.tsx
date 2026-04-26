@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { memo, useRef, useEffect, useState, useCallback } from "react";
 import type { HourlyData, Consensus, GridCoordinates } from "@/types";
 import { loadImage } from "@/utils/imageUtils";
 import clsx from "clsx";
@@ -12,7 +12,7 @@ interface HourlyUsageOverlayProps {
   readOnly?: boolean;
 }
 
-export const HourlyUsageOverlay = ({
+const HourlyUsageOverlayInner = ({
   data,
   onChange,
   imageUrl,
@@ -271,3 +271,10 @@ export const HourlyUsageOverlay = ({
     </div>
   );
 };
+
+/** Memoized export — the workspace passes stable hourlyValues / gridCoords
+ *  references via useMemo / nullish-coalesce, so React.memo's default
+ *  shallow prop comparison is sufficient. Skip-rendering this is the
+ *  single biggest navigation-perf win in the workspace because it owns
+ *  the canvas redraw + image-load cycle. */
+export const HourlyUsageOverlay = memo(HourlyUsageOverlayInner);
