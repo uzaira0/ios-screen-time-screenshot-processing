@@ -147,7 +147,10 @@ export const HomePage = () => {
         // action from here is to start preprocessing the screenshots that
         // were just loaded, so go straight there.
         if (features.preprocessing) {
-          navigate("/preprocessing");
+          // Carry the group through so PreprocessingPage selects it
+          // immediately on mount instead of presenting an empty
+          // group picker.
+          navigate(`/preprocessing?group=${encodeURIComponent(trimmedName)}`);
         }
       }
     },

@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useState, useRef } from "react";
-import { useSearchParams, Link, useBlocker } from "react-router";
+import { useSearchParams, Link } from "react-router";
 import { Layout } from "@/components/layout/Layout";
 import { usePreprocessingStore } from "@/hooks/usePreprocessingWithDI";
 import type { Stage } from "@/store/preprocessingStore";
@@ -234,12 +234,13 @@ export const PreprocessingPage = () => {
     return () => stopPolling();
   }, [loadGroups, stopPolling]);
 
-  // Block accidental navigation away while a stage is running. Two
-  // separate guards because they catch different exits:
-  //   beforeunload  — full reload, tab close, address-bar navigation
-  //   useBlocker    — in-app react-router navigation (Link, navigate())
-  // The browser pops a native confirm on the first; the blocker hands
-  // us a programmatic prompt on the second.
+  // Block accidental navigation away while a stage is running. Only
+  // the beforeunload path is wired because react-router's useBlocker
+  // requires the data-router setup (createBrowserRouter), and this app
+  // uses the declarative <BrowserRouter>. Tab close / full reload /
+  // address-bar nav fire the native confirm; in-app Link / navigate()
+  // transitions go through unguarded but the runStage entry's
+  // reconcileStuckStages() recovers any rows that were left mid-batch.
   const isRunningStage = usePreprocessingStore((s) => s.isRunningStage);
   useEffect(() => {
     if (!isRunningStage) return;
@@ -251,19 +252,6 @@ export const PreprocessingPage = () => {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [isRunningStage]);
-  const blocker = useBlocker(({ currentLocation, nextLocation }) =>
-    isRunningStage && currentLocation.pathname !== nextLocation.pathname,
-  );
-  useEffect(() => {
-    if (blocker.state !== "blocked") return;
-    // react-router types guarantee proceed/reset are non-undefined in
-    // the "blocked" branch (BlockerBlocked); narrow before calling.
-    const ok = window.confirm(
-      "Processing is still running. Leaving now will pause it — any in-flight screenshots may need to be re-run from this stage. Leave anyway?",
-    );
-    if (ok) blocker.proceed();
-    else blocker.reset();
-  }, [blocker]);
 
   // Deep-link stages must validate against the *active* list — PHI deep-links
   // are inert in WASM mode where phiDetection is off.
