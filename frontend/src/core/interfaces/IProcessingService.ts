@@ -52,4 +52,11 @@ export interface IProcessingService {
 
   /** Terminate the processing worker. It will be lazily recreated on next use. */
   terminate(): void;
+
+  /** Number of parallel processing workers in the pool. Callers that
+   *  drive a batch of OCR work use this to size their concurrency to
+   *  exactly the pool depth — going wider just queues messages on a
+   *  busy worker, going narrower wastes idle workers. Returns 1 for
+   *  implementations without a pool. */
+  getPoolSize?(): number;
 }

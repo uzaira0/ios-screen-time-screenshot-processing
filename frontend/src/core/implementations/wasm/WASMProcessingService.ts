@@ -13,14 +13,43 @@ import type {
 } from "./processing/workers/types";
 import { smartConvertBlobToImageData } from "./imageConversion";
 
+/**
+ * One worker slot in the pool. Each slot holds its own Web Worker,
+ * which in turn holds its own LepTess instance + tessdata mount in
+ * Emscripten heap. The slot tracks how many messages are currently
+ * in-flight so we can route new work to whichever worker is least
+ * loaded.
+ */
+interface WorkerSlot {
+  worker: Worker;
+  inFlight: number;
+}
+
+/** Hard floor of 2, cap of 8. The pool is bounded by per-worker memory
+ *  cost (~22 MB tessdata + ~15 MB WASM module = ~40 MB per worker), so
+ *  going wider than 8 wastes RAM without buying throughput on most
+ *  client hardware. */
+function poolSize(): number {
+  const cores = typeof navigator !== "undefined" && navigator.hardwareConcurrency
+    ? navigator.hardwareConcurrency
+    : 4;
+  // Leave half the cores for the main thread + decoders + canvas.
+  const target = Math.max(2, Math.min(8, Math.floor(cores / 2)));
+  return target;
+}
+
 export class WASMProcessingService implements IProcessingService {
-  private worker: Worker | null = null;
+  private workers: WorkerSlot[] = [];
   private initialized = false;
-  private initializationPromise: Promise<void> | null = null; // Prevents race conditions
+  private initializationPromise: Promise<void> | null = null;
   private messageIdCounter = 0;
+  /** Maps message id → the slot it was dispatched to + handlers. We
+   *  need to know the slot to decrement inFlight when the message
+   *  completes (success, error, or timeout). */
   private pendingRequests = new Map<
     string,
     {
+      slot: WorkerSlot;
       resolve: (value: unknown) => void;
       reject: (error: Error) => void;
       onProgress?: ProcessingProgressCallback | undefined;
@@ -28,98 +57,130 @@ export class WASMProcessingService implements IProcessingService {
   >();
 
   constructor() {
-    this.initializeWorker();
+    this.spawnPool();
   }
 
-  private initializeWorker(): void {
-    // Rust+leptess pipeline (wasm32-unknown-emscripten). The worker dynamically
-    // imports the Emscripten-compiled IosScreenTimePipeline.wasm produced by
-    // scripts/build-wasm-emscripten.sh and staged into
-    // frontend/public/pipeline-em/. Grid detection, OCR (leptess →
-    // libtesseract), bar extraction, and boundary optimization all run in
-    // Rust — no Tesseract.js, no TS canvas ports.
-    this.worker = new Worker(
-      new URL("./processing/workers/imageProcessor.worker.emscripten.ts", import.meta.url),
-      { type: "module" },
-    );
+  /** Number of workers in the pool. Used by the preprocessing service
+   *  to size its OCR concurrency exactly to the pool. */
+  getPoolSize(): number {
+    return this.workers.length;
+  }
 
-    this.worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
-      const { type, id, payload, error } = e.data;
-      console.log(
-        "[WASMProcessingService.worker.onmessage] Received message:",
-        { type, id, hasPayload: !!payload, error },
+  private spawnPool(): void {
+    // Rust+leptess pipeline (wasm32-unknown-emscripten). Each worker
+    // dynamically imports the Emscripten-compiled IosScreenTimePipeline.wasm
+    // and mounts its own copy of eng.traineddata via the JS loader in
+    // pipelineLoader.ts. Workers don't share LepTess state, which is
+    // exactly what we want — Tesseract isn't reentrant.
+    const n = poolSize();
+    for (let i = 0; i < n; i++) {
+      const worker = new Worker(
+        new URL(
+          "./processing/workers/imageProcessor.worker.emscripten.ts",
+          import.meta.url,
+        ),
+        { type: "module" },
       );
+      const slot: WorkerSlot = { worker, inFlight: 0 };
+      worker.onmessage = (e: MessageEvent<WorkerResponse>) => this.onWorkerMessage(slot, e);
+      worker.onerror = (error) => this.onWorkerError(slot, error);
+      this.workers.push(slot);
+    }
+  }
 
-      if (type === "PROGRESS") {
-        const progressData = payload as ProgressUpdate["payload"];
-        const request = this.pendingRequests.get(id);
-        if (request && request.onProgress) {
-          request.onProgress(progressData);
-        }
-        return;
-      }
+  private onWorkerMessage(slot: WorkerSlot, e: MessageEvent<WorkerResponse>): void {
+    const { type, id, payload, error } = e.data;
 
+    if (type === "PROGRESS") {
+      const progressData = payload as ProgressUpdate["payload"];
       const request = this.pendingRequests.get(id);
-      if (!request) {
-        console.warn(
-          "[WASMProcessingService.worker.onmessage] No pending request found for id:",
-          id,
-        );
-        return;
+      if (request?.onProgress) {
+        request.onProgress(progressData);
       }
+      return;
+    }
 
-      if (type === "ERROR") {
-        console.error(
-          "[WASMProcessingService.worker.onmessage] Worker returned error:",
-          error,
-        );
-        request.reject(new Error(error || "Unknown error in worker"));
-      } else {
-        console.log(
-          "[WASMProcessingService.worker.onmessage] Resolving request with payload",
-        );
-        request.resolve(payload);
-      }
+    const request = this.pendingRequests.get(id);
+    if (!request) {
+      console.warn(
+        "[WASMProcessingService] No pending request for id:", id,
+      );
+      return;
+    }
 
-      this.pendingRequests.delete(id);
-    };
+    // Defensive: the slot we matched the message to should be the same
+    // one we dispatched to. Log if it isn't — that points at a routing
+    // bug.
+    if (request.slot !== slot) {
+      console.warn(
+        "[WASMProcessingService] Response from unexpected worker; routing the result anyway.",
+      );
+    }
 
-    this.worker.onerror = (error) => {
-      console.error("Worker error:", error);
-      this.initialized = false;
-      this.pendingRequests.forEach((request) => {
+    if (type === "ERROR") {
+      console.error("[WASMProcessingService] Worker returned error:", error);
+      request.reject(new Error(error || "Unknown error in worker"));
+    } else {
+      request.resolve(payload);
+    }
+
+    request.slot.inFlight = Math.max(0, request.slot.inFlight - 1);
+    this.pendingRequests.delete(id);
+  }
+
+  private onWorkerError(slot: WorkerSlot, error: ErrorEvent): void {
+    console.error("[WASMProcessingService] Worker error:", error);
+    // Reject every request that was routed to this slot. Other slots
+    // are unaffected.
+    for (const [id, request] of this.pendingRequests.entries()) {
+      if (request.slot === slot) {
         request.reject(new Error("Worker error: " + error.message));
-      });
-      this.pendingRequests.clear();
-    };
+        this.pendingRequests.delete(id);
+      }
+    }
+    slot.inFlight = 0;
+    // Don't recreate the dead worker yet — terminate() handles full
+    // pool replacement; a single dead worker just shrinks effective
+    // concurrency until then. This avoids surprise re-fetching of
+    // tessdata on the hot path.
+    this.initialized = false;
   }
 
   private generateMessageId(): string {
     return `msg_${++this.messageIdCounter}_${Date.now()}`;
   }
 
-  private async sendMessage<T>(
+  /** Pick the worker with the fewest in-flight messages. Round-robin
+   *  is fine for uniform jobs but OCR-heavy stages have a long tail,
+   *  and least-loaded keeps the pool draining evenly. */
+  private pickSlot(): WorkerSlot {
+    let best = this.workers[0]!;
+    for (let i = 1; i < this.workers.length; i++) {
+      if (this.workers[i]!.inFlight < best.inFlight) {
+        best = this.workers[i]!;
+      }
+    }
+    return best;
+  }
+
+  /** Send a message to a SPECIFIC slot. Used by initialize() to fan
+   *  out an INITIALIZE to every worker so they all load tessdata
+   *  before the first PROCESS_IMAGE arrives. */
+  private async sendMessageTo<T>(
+    slot: WorkerSlot,
     message: Omit<WorkerMessage, "id">,
     onProgress?: ProcessingProgressCallback,
   ): Promise<T> {
-    if (!this.worker) {
-      throw new Error("Worker not initialized");
-    }
-
     const id = this.generateMessageId();
-    console.log(
-      "[WASMProcessingService.sendMessage] Sending message type:",
-      message.type,
-      "with id:",
-      id,
-    );
 
     return new Promise<T>((resolve, reject) => {
-      // INITIALIZE downloads ~15MB of Tesseract WASM + trained data — needs longer timeout.
-      // Regular messages use 60s (processing a single image with OCR can take 10-20s).
       const timeoutMs = message.type === "INITIALIZE" ? 120000 : 60000;
       const timeout = setTimeout(() => {
-        this.pendingRequests.delete(id);
+        const pending = this.pendingRequests.get(id);
+        if (pending) {
+          pending.slot.inFlight = Math.max(0, pending.slot.inFlight - 1);
+          this.pendingRequests.delete(id);
+        }
         reject(
           new Error(
             `Worker message ${message.type} timed out after ${timeoutMs / 1000} seconds`,
@@ -128,6 +189,7 @@ export class WASMProcessingService implements IProcessingService {
       }, timeoutMs);
 
       this.pendingRequests.set(id, {
+        slot,
         resolve: (value: unknown) => {
           clearTimeout(timeout);
           resolve(value as T);
@@ -138,61 +200,53 @@ export class WASMProcessingService implements IProcessingService {
         },
         onProgress,
       });
+      slot.inFlight++;
 
-      const fullMessage: WorkerMessage = {
-        ...message,
-        id,
-      };
+      const fullMessage: WorkerMessage = { ...message, id };
 
-      console.log(
-        "[WASMProcessingService.sendMessage] Posted message to worker:",
-        fullMessage.type,
-      );
-
-      // Collect transferable ArrayBuffers from ImageData payloads for zero-copy transfer
+      // Collect transferable ArrayBuffers from ImageData payloads for zero-copy transfer.
       const transferables: Transferable[] = [];
       const payload = fullMessage.payload as Record<string, unknown> | undefined;
       if (payload?.imageData && (payload.imageData as ImageData).data?.buffer) {
         transferables.push((payload.imageData as ImageData).data.buffer);
       }
-      this.worker!.postMessage(fullMessage, transferables);
+      slot.worker.postMessage(fullMessage, transferables);
     });
   }
 
-  async initialize(): Promise<void> {
-    console.log("[WASMProcessingService.initialize] Starting initialization");
-
-    // If already initialized, return immediately
-    if (this.initialized) {
-      console.log("[WASMProcessingService.initialize] Already initialized");
-      return;
+  /** Send a message to whichever worker is least busy. Used for the
+   *  ordinary processImage / detectGrid / extract* calls. */
+  private async sendMessage<T>(
+    message: Omit<WorkerMessage, "id">,
+    onProgress?: ProcessingProgressCallback,
+  ): Promise<T> {
+    if (this.workers.length === 0) {
+      throw new Error("Worker pool not initialized");
     }
+    return this.sendMessageTo<T>(this.pickSlot(), message, onProgress);
+  }
 
-    // If initialization is in progress, wait for it to complete (prevents race condition)
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+
     if (this.initializationPromise) {
-      console.log(
-        "[WASMProcessingService.initialize] Initialization already in progress, waiting...",
-      );
       return this.initializationPromise;
     }
 
-    // Start new initialization and cache the promise
     this.initializationPromise = (async () => {
       try {
-        console.log(
-          "[WASMProcessingService.initialize] Sending INITIALIZE message to worker",
+        // Fan out INITIALIZE to every worker in parallel so they all
+        // mount tessdata before the first real PROCESS_IMAGE lands.
+        // The browser's HTTP cache + service worker dedupe the
+        // eng.traineddata fetch across workers, so the first one pays
+        // the network cost and the rest hit cache.
+        await Promise.all(
+          this.workers.map((slot) =>
+            this.sendMessageTo(slot, { type: "INITIALIZE", payload: {} }),
+          ),
         );
-        await this.sendMessage({
-          type: "INITIALIZE",
-          payload: {},
-        });
-
         this.initialized = true;
-        console.log(
-          "[WASMProcessingService.initialize] Initialization complete",
-        );
       } catch (error) {
-        // Clear the promise on error so retry is possible
         this.initializationPromise = null;
         throw error;
       }
@@ -218,28 +272,16 @@ export class WASMProcessingService implements IProcessingService {
     gridDetectionError?: string;
     alignmentScore?: number | null;
   }> {
-    console.log(
-      "[WASMProcessingService.processImage] Starting, initialized:",
-      this.initialized,
-    );
-
     if (!this.initialized) {
-      console.log(
-        "[WASMProcessingService.processImage] Not initialized, calling initialize()",
-      );
       await this.initialize();
-      console.log("[WASMProcessingService.processImage] Initialize complete");
     }
 
-    const _blobT0 = performance.now();
     const imgData =
       imageData instanceof Blob
         ? await smartConvertBlobToImageData(imageData)
         : imageData;
-    console.log(`[BENCH] processImage blob→ImageData: ${(performance.now() - _blobT0).toFixed(0)}ms (${imgData.width}x${imgData.height})`);
 
-    const _workerT0 = performance.now();
-    const result = await this.sendMessage<ProcessImageResponse["payload"]>(
+    return await this.sendMessage<ProcessImageResponse["payload"]>(
       {
         type: "PROCESS_IMAGE",
         payload: {
@@ -251,9 +293,6 @@ export class WASMProcessingService implements IProcessingService {
       },
       onProgress,
     );
-    console.log(`[BENCH] processImage worker round-trip: ${(performance.now() - _workerT0).toFixed(0)}ms`);
-
-    return result;
   }
 
   private async ensureReadyAndConvert(imageData: ImageData | Blob): Promise<ImageData> {
@@ -301,32 +340,28 @@ export class WASMProcessingService implements IProcessingService {
     imageType: ImageType,
     method?: "ocr_anchored" | "line_based",
   ): Promise<GridCoordinates | null> {
-    const _dgT0 = performance.now();
     const imgData = await this.ensureReadyAndConvert(imageData);
-    console.log(`[BENCH] detectGrid blob→ImageData: ${(performance.now() - _dgT0).toFixed(0)}ms`);
-    const _dgT1 = performance.now();
     const result = await this.sendMessage<{
       gridCoordinates: GridCoordinates | null;
     }>({
       type: "DETECT_GRID",
       payload: { imageData: imgData, imageType, method },
     });
-    console.log(`[BENCH] detectGrid worker round-trip (${method}): ${(performance.now() - _dgT1).toFixed(0)}ms`);
     return result.gridCoordinates;
   }
 
   terminate(): void {
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-      this.initialized = false;
-      this.initializationPromise = null;
-      for (const request of this.pendingRequests.values()) {
-        request.reject(new Error("Worker terminated"));
-      }
-      this.pendingRequests.clear();
+    for (const slot of this.workers) {
+      slot.worker.terminate();
     }
-    // Recreate the worker so the service can be used again
-    this.initializeWorker();
+    this.workers = [];
+    this.initialized = false;
+    this.initializationPromise = null;
+    for (const request of this.pendingRequests.values()) {
+      request.reject(new Error("Worker pool terminated"));
+    }
+    this.pendingRequests.clear();
+    // Recreate the pool so the service can be used again
+    this.spawnPool();
   }
 }

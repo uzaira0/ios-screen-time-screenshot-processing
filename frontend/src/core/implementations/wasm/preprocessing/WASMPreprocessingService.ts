@@ -380,11 +380,15 @@ export class WASMPreprocessingService implements IPreprocessingService {
 
     // device_detection and cropping are I/O bound (IndexedDB reads +
     // canvas decode), not bound by any shared worker — fire all of
-    // them at once and let the browser's own scheduler handle
-    // ordering. PHI stages still serialize because they share a
+    // them at once.
+    // ocr scales with the processing-worker pool size — each LepTess
+    // worker can handle one PROCESS_IMAGE at a time, so dispatching
+    // poolSize-many concurrent jobs keeps every worker busy without
+    // queueing. PHI stages still serialize because they share a
     // single Tesseract/NER worker per browser tab.
     const isUnboundedConcurrency =
       stage === "device_detection" || stage === "cropping";
+    const ocrConcurrency = stage === "ocr" ? this.processing.getPoolSize?.() ?? 1 : 0;
 
     if (isUnboundedConcurrency) {
       const settled = await Promise.allSettled(
@@ -392,10 +396,6 @@ export class WASMPreprocessingService implements IPreprocessingService {
           this.processStage(screenshot, stage, options),
         ),
       );
-      // Recording is bulk after the fact — all promises are already
-      // resolved/rejected, so the abort check that was here was dead.
-      // Walk results and record any failures sequentially so the IDB
-      // writes don't pile up.
       const failures: Array<{ screenshot: Screenshot; reason: unknown }> = [];
       for (let i = 0; i < settled.length; i++) {
         const result = settled[i]!;
@@ -409,10 +409,35 @@ export class WASMPreprocessingService implements IPreprocessingService {
         await recordFailure(f.screenshot, f.reason);
       }
       options.onProgress?.(completed, eligible.length);
+    } else if (ocrConcurrency > 1) {
+      // Pool-sized concurrency for OCR. Use a cursor + N workers
+      // pattern so each worker pulls the next eligible screenshot the
+      // moment it finishes its current one. This keeps the pool fully
+      // saturated even when individual screenshots take wildly
+      // different OCR times (Pro Max + many apps vs iPhone SE +
+      // single-app).
+      let cursor = 0;
+      const runner = async () => {
+        for (;;) {
+          if (options.abortSignal?.aborted) return;
+          const i = cursor++;
+          if (i >= eligible.length) return;
+          const screenshot = eligible[i]!;
+          try {
+            await this.processStage(screenshot, stage, options);
+            completed++;
+          } catch (e) {
+            await recordFailure(screenshot, e);
+          }
+          options.onProgress?.(completed, eligible.length);
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(ocrConcurrency, eligible.length) }, () => runner()),
+      );
     } else {
-      // OCR + PHI: must serialize because they share a worker. Fall
-      // through to the original one-at-a-time path so onProgress ticks
-      // per screenshot and we can abort cleanly between items.
+      // PHI: serialize because the Tesseract.js + NER workers are
+      // singletons and not part of the LepTess pool.
       for (let i = 0; i < eligible.length; i++) {
         if (options.abortSignal?.aborted) break;
         const screenshot = eligible[i]!;
