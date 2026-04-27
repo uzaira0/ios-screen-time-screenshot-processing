@@ -17,7 +17,7 @@ use crate::{
     bar_extraction::{compute_bar_alignment_score, slice_image},
     grid_detection,
     image_utils::{convert_dark_mode, remove_all_but},
-    ocr::{extract_from_words, is_daily_total_page, OcrWord},
+    ocr::{OcrWord, extract_from_words, is_daily_total_page},
     types::{DetectionMethod, ImageType},
 };
 
