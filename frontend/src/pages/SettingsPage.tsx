@@ -537,7 +537,7 @@ function StorageSection() {
         const root = await navigator.storage.getDirectory();
         // @ts-expect-error — TS lib lacks the iterator typing for now.
         for await (const [name] of root.entries()) {
-          await root.removeEntry(name, { recursive: true }).catch(() => {});
+          await root.removeEntry(name, { recursive: true }).catch(() => { /* best-effort wipe — skip entries already removed or unremovable */ });
         }
       } catch {
         // OPFS may not be available — ok
