@@ -137,14 +137,16 @@ export const Header = () => {
                 >
                   <HelpCircle className="h-4 w-4" />
                 </Link>
-                <button
-                  onClick={() => setThemeMode(THEME_CYCLE[themeMode])}
-                  className="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md transition-colors focus-ring"
-                  aria-label={`Theme: ${themeMode}. Click to switch.`}
-                  title={`Theme: ${themeMode}`}
-                >
-                  <ThemeIcon className="h-4 w-4" />
-                </button>
+                {!config.isLocalMode && (
+                  <button
+                    onClick={() => setThemeMode(THEME_CYCLE[themeMode])}
+                    className="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md transition-colors focus-ring"
+                    aria-label={`Theme: ${themeMode}. Click to switch.`}
+                    title={`Theme: ${themeMode}`}
+                  >
+                    <ThemeIcon className="h-4 w-4" />
+                  </button>
+                )}
                 <button
                   onClick={() => { logout(); navigate("/login"); }}
                   className="hidden md:inline-flex items-center gap-2 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-ring"

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { Sun, Moon, Monitor } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { config } from "@/config";
 
 export type ThemeMode = "light" | "dark" | "system";
 
@@ -30,10 +31,15 @@ function applyTheme(mode: ThemeMode) {
   document.documentElement.classList.toggle("dark", isDark);
 }
 
-const raw = typeof localStorage !== "undefined" ? localStorage.getItem("theme") : null;
-const initial: ThemeMode = raw && (["light", "dark", "system"] as string[]).includes(raw)
-  ? (raw as ThemeMode)
-  : "system";
+// WASM/Tauri (local-only): always force light — no toggle is shown in this mode.
+// Server mode: restore from localStorage, defaulting to "system".
+const initial: ThemeMode = (() => {
+  if (config.isLocalMode) return "light";
+  const raw = typeof localStorage !== "undefined" ? localStorage.getItem("theme") : null;
+  return raw && (["light", "dark", "system"] as string[]).includes(raw)
+    ? (raw as ThemeMode)
+    : "system";
+})();
 
 // Apply synchronously before React mounts to prevent theme flash
 applyTheme(initial);
