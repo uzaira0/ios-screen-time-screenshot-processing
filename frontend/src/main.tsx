@@ -21,11 +21,6 @@ ReactDOM.createRoot(rootElement).render(
 
 // Register SW after render so it doesn't block first paint.
 registerServiceWorker();
-onSWUpdate(async () => {
-  const { default: toast } = await import("react-hot-toast");
-  toast("Code update ready — your data stays on device. Reload to apply.", {
-    duration: 8000,
-    id: "sw-update",
-    icon: "🔄",
-  });
+onSWUpdate(() => {
+  window.location.reload();
 });

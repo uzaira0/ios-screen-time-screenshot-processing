@@ -9,9 +9,16 @@
 export type SWUpdateCallback = () => void;
 
 let updateCallback: SWUpdateCallback | null = null;
+let updateFired = false;
 
 export function onSWUpdate(cb: SWUpdateCallback) {
   updateCallback = cb;
+}
+
+function fireUpdate() {
+  if (updateFired) return;
+  updateFired = true;
+  updateCallback?.();
 }
 
 export async function registerServiceWorker(): Promise<void> {
@@ -34,14 +41,14 @@ export async function registerServiceWorker(): Promise<void> {
       newWorker.addEventListener('statechange', () => {
         // New SW activated — page is now controlled by the new version
         if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
-          updateCallback?.();
+          fireUpdate();
         }
       });
     });
 
     // Page reloads needed when controller switches (skipWaiting + claim)
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      updateCallback?.();
+      fireUpdate();
     });
 
     // Trigger a background update check (finds new SW without user action)
