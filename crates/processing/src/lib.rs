@@ -5,6 +5,7 @@
 
 pub mod bar_extraction;
 pub mod boundary_optimizer;
+pub mod generated_constants;
 pub mod grid_detection;
 pub mod image_utils;
 pub mod ocr;

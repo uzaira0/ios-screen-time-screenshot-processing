@@ -30,7 +30,9 @@
     "threshold": 100
   },
   "darken_non_white": {
-    "channel_sum_threshold": 720,
-    "_comment": "Equivalent to (R+G+B)/3 > 240. Uses integer sum to match Rust exactly."
+    "luma_threshold": 240,
+    "luma_coefficients": [77, 150, 29],
+    "luma_shift": 8,
+    "_comment": "BT.601 luma threshold for the white test in darken_non_white / darken_and_binarize. luma = (R*c0 + G*c1 + B*c2) >> shift; pixel is white iff luma > threshold. Matches canvas cvtColorToGray + threshold(240). Canonical impl: crates/processing/src/image_utils.rs."
   }
 }

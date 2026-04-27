@@ -1,5 +1,5 @@
 //! AUTO-GENERATED from shared/*.json — do not edit manually.
-//! Hash: a8dcfa6d057f9773
+//! Hash: 63aa46172e6b1efe
 //! Regenerate: python scripts/generate-shared-constants.py
 
 use std::collections::HashMap;
@@ -38,7 +38,9 @@ pub const NUM_SLICES: usize = 24;
 pub const MAX_Y: f64 = 60.0;
 pub const LOWER_GRID_BUFFER: usize = 2;
 pub const DARK_MODE_THRESHOLD: f64 = 100.0;
-pub const DARKEN_NON_WHITE_THRESHOLD: u16 = 720;
+pub const DARKEN_NON_WHITE_LUMA_THRESHOLD: u32 = 240;
+pub const DARKEN_NON_WHITE_LUMA_COEFFS: [u32; 3] = [77, 150, 29];
+pub const DARKEN_NON_WHITE_LUMA_SHIFT: u32 = 8;
 
 pub const GRAY_MIN: u8 = 195;
 pub const GRAY_MAX: u8 = 210;
@@ -58,4 +60,4 @@ pub const COLOR_MIN_SATURATION: u8 = 50;
 pub const COLOR_MIN_VALUE: u8 = 50;
 pub const MIN_BLUE_RATIO: f64 = 0.5;
 
-pub const SHARED_CONSTANTS_HASH: &str = "a8dcfa6d057f9773";
+pub const SHARED_CONSTANTS_HASH: &str = "63aa46172e6b1efe";

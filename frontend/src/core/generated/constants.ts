@@ -1,6 +1,6 @@
 /**
  * AUTO-GENERATED from shared/*.json — do not edit manually.
- * Hash: a8dcfa6d057f9773
+ * Hash: 63aa46172e6b1efe
  * Regenerate: python scripts/generate-shared-constants.py
  */
 
@@ -31,7 +31,9 @@ export const MAX_Y = 60;
 export const LOWER_GRID_BUFFER = 2;
 export const SCALE_AMOUNT = 4;
 export const DARK_MODE_THRESHOLD = 100;
-export const DARKEN_NON_WHITE_THRESHOLD = 720;
+export const DARKEN_NON_WHITE_LUMA_THRESHOLD = 240;
+export const DARKEN_NON_WHITE_LUMA_COEFFS = [77, 150, 29] as const;
+export const DARKEN_NON_WHITE_LUMA_SHIFT = 8;
 
 export const H_GRAY_MIN = 195;
 export const H_GRAY_MAX = 210;
@@ -78,4 +80,4 @@ export const UserRole = { ADMIN: "admin" as const, ANNOTATOR: "annotator" as con
 export const WEBSOCKET_EVENTS = ["annotation_submitted", "screenshot_completed", "consensus_disputed", "user_joined", "user_left"] as const;
 export type WebsocketEvents = (typeof WEBSOCKET_EVENTS)[number];
 
-export const SHARED_CONSTANTS_HASH = "a8dcfa6d057f9773";
+export const SHARED_CONSTANTS_HASH = "63aa46172e6b1efe";

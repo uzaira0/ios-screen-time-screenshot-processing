@@ -129,16 +129,38 @@ class TestProcessingConstantsConsistency:
         rs_content = rs_file.read_text()
         assert f"NUM_SLICES: usize = {canonical['bar_extraction']['num_slices']}" in rs_content
 
-    def test_darken_threshold_in_rust(self):
-        canonical = load_json("processing_constants")
-        threshold = canonical["darken_non_white"]["channel_sum_threshold"]
+    def test_darken_threshold_wired_through_in_rust(self):
+        """The Rust BT.601 luma threshold must come from generated_constants, not be hardcoded."""
         rs_file = ROOT / "crates" / "processing" / "src" / "image_utils.rs"
         rs_content = rs_file.read_text()
-        assert str(threshold) in rs_content, f"Rust darken threshold {threshold} not found"
+        assert "DARKEN_NON_WHITE_LUMA_THRESHOLD" in rs_content, (
+            "Rust image_utils.rs must consume DARKEN_NON_WHITE_LUMA_THRESHOLD from "
+            "generated_constants — do not hardcode the threshold."
+        )
+        assert "DARKEN_NON_WHITE_LUMA_COEFFS" in rs_content, (
+            "Rust image_utils.rs must consume DARKEN_NON_WHITE_LUMA_COEFFS from generated_constants."
+        )
 
-    def test_darken_threshold_in_python(self):
-        canonical = load_json("processing_constants")
-        threshold = canonical["darken_non_white"]["channel_sum_threshold"]
+    def test_darken_threshold_wired_through_in_python(self):
+        """The Python BT.601 luma threshold must come from generated_constants, not be hardcoded."""
         py_file = ROOT / "src" / "screenshot_processor" / "core" / "image_utils.py"
         py_content = py_file.read_text()
-        assert str(threshold) in py_content, f"Python darken threshold {threshold} not found"
+        assert "DARKEN_NON_WHITE_LUMA_THRESHOLD" in py_content, (
+            "Python image_utils.py must consume DARKEN_NON_WHITE_LUMA_THRESHOLD from "
+            "generated_constants — do not hardcode the threshold."
+        )
+
+    def test_darken_threshold_value_matches_canonical(self):
+        """Generated constants must carry the JSON SSoT value for the BT.601 threshold."""
+        canonical = load_json("processing_constants")
+        threshold = canonical["darken_non_white"]["luma_threshold"]
+        for path in [
+            ROOT / "crates" / "processing" / "src" / "generated_constants.rs",
+            ROOT / "src" / "screenshot_processor" / "core" / "generated_constants.py",
+            ROOT / "frontend" / "src" / "core" / "generated" / "constants.ts",
+        ]:
+            content = path.read_text()
+            assert f"DARKEN_NON_WHITE_LUMA_THRESHOLD" in content, f"{path} missing threshold const"
+            assert f"= {threshold}" in content, (
+                f"{path} threshold value drifted from shared/processing_constants.json"
+            )

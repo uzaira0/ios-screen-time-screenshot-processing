@@ -100,12 +100,19 @@ def remove_all_but(img: np.ndarray, color: np.ndarray, threshold: int = 30):
 
 
 def darken_non_white(img: np.ndarray) -> np.ndarray:
-    # Zero out non-white pixels using simple (R+G+B)/3 > 240 threshold.
-    # Uses integer sum > 720 to match the Rust implementation exactly.
-    # This avoids cv2.cvtColor's weighted grayscale (0.299R + 0.587G + 0.114B)
-    # which can differ from the simple average on edge-case pixels.
-    channel_sum = img.astype(np.uint16).sum(axis=2)  # (H, W)
-    mask = channel_sum > 720  # equivalent to (R+G+B)/3 > 240
+    # BT.601 luma > threshold = white. Mirrors crates/processing/src/image_utils.rs
+    # and the canvas cvtColorToGray path. Constants come from the SSoT pipeline
+    # (shared/processing_constants.json -> generated_constants.py).
+    from screenshot_processor.core.generated_constants import (
+        DARKEN_NON_WHITE_LUMA_COEFFS,
+        DARKEN_NON_WHITE_LUMA_SHIFT,
+        DARKEN_NON_WHITE_LUMA_THRESHOLD,
+    )
+
+    c0, c1, c2 = DARKEN_NON_WHITE_LUMA_COEFFS
+    rgb = img.astype(np.uint32)
+    luma = (rgb[..., 0] * c0 + rgb[..., 1] * c1 + rgb[..., 2] * c2) >> DARKEN_NON_WHITE_LUMA_SHIFT
+    mask = luma > DARKEN_NON_WHITE_LUMA_THRESHOLD
     img[~mask] = 0
     return img
 

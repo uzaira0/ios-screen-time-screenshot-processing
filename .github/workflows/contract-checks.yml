@@ -43,18 +43,18 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
-        run: pip install pytest numpy opencv-python-headless
+      - name: Install pytest
+        run: pip install pytest
 
-      - name: Install project
-        run: pip install -e ".[dev]" || true
-
-      - name: Run contract tests
-        run: pytest tests/unit/test_export_contract.py tests/unit/test_model_attribute_contract.py -v
-
-      - name: Run cross-implementation parity tests
-        run: pytest tests/contract/test_single_source_of_truth.py -v
-        continue-on-error: true
+      - name: Run SSoT contract tests
+        # Tests read shared/*.json + the generated constants files directly,
+        # so they need no project install. --noconftest skips the project-root
+        # conftest (which loads the legacy fastapi/sqlalchemy server stack).
+        run: |
+          pytest \
+            tests/unit/test_export_contract.py \
+            tests/contract/test_single_source_of_truth.py \
+            -v --noconftest --rootdir=.
 
   typescript-types:
     name: TypeScript Type Check

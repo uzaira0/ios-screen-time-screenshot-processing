@@ -2,33 +2,37 @@
 
 Single source of truth: shared/export_columns.json
 Generated into: Python (generated_constants.py) and TypeScript (constants.ts)
-Used by: server CSV export, WASM client-side export, this test
+Used by: WASM client-side export, this test.
+
+Reads the JSON SSoT directly so the test runs without installing the
+screenshot_processor package — it is the contract over the SSoT, not
+over any one downstream artifact.
 """
 
 from __future__ import annotations
 
-from screenshot_processor.core.generated_constants import EXPORT_CSV_HEADERS
+import json
+from pathlib import Path
 
-# Import from generated constants — any column change requires updating
-# shared/export_columns.json and regenerating constants
-EXPORT_COLUMNS = EXPORT_CSV_HEADERS
+ROOT = Path(__file__).parent.parent.parent
+EXPORT_COLUMNS_JSON = ROOT / "shared" / "export_columns.json"
+
+_metadata_headers: list[str] = json.loads(EXPORT_COLUMNS_JSON.read_text())["headers"]
+EXPORT_COLUMNS: list[str] = [*_metadata_headers, *(f"Hour {i}" for i in range(24))]
 
 
 class TestExportColumnContract:
-    """Verify the export endpoint produces the canonical columns."""
+    """Verify the canonical export column set matches the SSoT."""
 
     def test_column_count(self):
-        """Export must have exactly 17 metadata + 24 hourly = 41 columns."""
         assert len(EXPORT_COLUMNS) == 41
 
     def test_hourly_columns_present(self):
-        """All 24 hourly columns must be present in order."""
         hourly = [c for c in EXPORT_COLUMNS if c.startswith("Hour ")]
         assert len(hourly) == 24
         assert hourly == [f"Hour {i}" for i in range(24)]
 
     def test_required_metadata_columns(self):
-        """Critical metadata columns must be present."""
         required = [
             "Screenshot ID",
             "Group ID",
@@ -42,9 +46,6 @@ class TestExportColumnContract:
             assert col in EXPORT_COLUMNS, f"Required column '{col}' missing from export"
 
     def test_backend_export_header_matches_contract(self):
-        """The backend CSV writer must produce the canonical header row."""
-        # Import the actual header construction from the export endpoint
-        # This verifies the code matches our contract, not just that the test passes
         header_row = [
             "Screenshot ID",
             "Filename",
@@ -66,11 +67,22 @@ class TestExportColumnContract:
             *[f"Hour {i}" for i in range(24)],
         ]
         assert header_row == EXPORT_COLUMNS, (
-            f"Backend header does not match export contract.\n"
+            f"Header drift from shared/export_columns.json.\n"
             f"Expected: {EXPORT_COLUMNS}\n"
             f"Got: {header_row}"
         )
 
     def test_no_duplicate_columns(self):
-        """Column names must be unique."""
         assert len(EXPORT_COLUMNS) == len(set(EXPORT_COLUMNS))
+
+    def test_typescript_constants_in_sync(self):
+        """The generated TS constants file must contain the same header list."""
+        ts_path = ROOT / "frontend" / "src" / "core" / "generated" / "constants.ts"
+        if not ts_path.exists():
+            return
+        ts_src = ts_path.read_text()
+        for col in EXPORT_COLUMNS:
+            assert col in ts_src, (
+                f"Header '{col}' missing from frontend/src/core/constants.ts — "
+                f"regenerate via: python scripts/generate-shared-constants.py"
+            )

@@ -1,6 +1,6 @@
 """
 AUTO-GENERATED from shared/*.json — do not edit manually.
-Hash: a8dcfa6d057f9773
+Hash: 63aa46172e6b1efe
 Regenerate: python scripts/generate-shared-constants.py
 """
 
@@ -33,7 +33,9 @@ MAX_Y: int = 60
 LOWER_GRID_BUFFER: int = 2
 SCALE_AMOUNT: int = 4
 DARK_MODE_THRESHOLD: int = 100
-DARKEN_NON_WHITE_THRESHOLD: int = 720
+DARKEN_NON_WHITE_LUMA_THRESHOLD: int = 240
+DARKEN_NON_WHITE_LUMA_COEFFS: tuple[int, int, int] = (77, 150, 29)
+DARKEN_NON_WHITE_LUMA_SHIFT: int = 8
 
 H_GRAY_MIN: int = 195
 H_GRAY_MAX: int = 210
@@ -77,4 +79,4 @@ IMAGE_TYPES: list[str] = ["screen_time", "battery"]
 USER_ROLES: list[str] = ["admin", "annotator"]
 WEBSOCKET_EVENTS: list[str] = ["annotation_submitted", "screenshot_completed", "consensus_disputed", "user_joined", "user_left"]
 
-SHARED_CONSTANTS_HASH: str = "a8dcfa6d057f9773"
+SHARED_CONSTANTS_HASH: str = "63aa46172e6b1efe"

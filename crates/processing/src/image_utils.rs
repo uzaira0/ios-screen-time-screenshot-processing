@@ -10,6 +10,10 @@
 use image::Rgb;
 use image::RgbImage;
 
+use crate::generated_constants::{
+    DARKEN_NON_WHITE_LUMA_COEFFS, DARKEN_NON_WHITE_LUMA_SHIFT, DARKEN_NON_WHITE_LUMA_THRESHOLD,
+};
+
 /// Dark mode detection threshold (mean pixel value).
 const DARK_MODE_THRESHOLD: f64 = 100.0;
 
@@ -222,10 +226,12 @@ pub fn darken_non_white(img: &mut RgbImage) {
     let raw = img.as_mut();
     let len = raw.len();
     let mut i = 0;
+    let [c0, c1, c2] = DARKEN_NON_WHITE_LUMA_COEFFS;
+    let shift = DARKEN_NON_WHITE_LUMA_SHIFT;
+    let threshold = DARKEN_NON_WHITE_LUMA_THRESHOLD;
     while i + 2 < len {
-        // Canvas darkenNonWhite: cvtColorToGray uses (R*77+G*150+B*29)>>8, threshold > 240 = white.
-        let luma = (raw[i] as u32 * 77 + raw[i + 1] as u32 * 150 + raw[i + 2] as u32 * 29) >> 8;
-        if luma <= 240 {
+        let luma = (raw[i] as u32 * c0 + raw[i + 1] as u32 * c1 + raw[i + 2] as u32 * c2) >> shift;
+        if luma <= threshold {
             raw[i] = 0;
             raw[i + 1] = 0;
             raw[i + 2] = 0;
@@ -250,16 +256,16 @@ pub fn darken_and_binarize(img: &mut RgbImage) {
     let raw = img.as_mut();
     let len = raw.len();
     let mut i = 0;
+    let [c0, c1, c2] = DARKEN_NON_WHITE_LUMA_COEFFS;
+    let shift = DARKEN_NON_WHITE_LUMA_SHIFT;
+    let threshold = DARKEN_NON_WHITE_LUMA_THRESHOLD;
     while i + 2 < len {
-        // Canvas darkenNonWhite: cvtColorToGray uses (R*77+G*150+B*29)>>8, threshold > 240 = white.
-        let luma = (raw[i] as u32 * 77 + raw[i + 1] as u32 * 150 + raw[i + 2] as u32 * 29) >> 8;
-        if luma <= 240 {
-            // darken: set to black
+        let luma = (raw[i] as u32 * c0 + raw[i + 1] as u32 * c1 + raw[i + 2] as u32 * c2) >> shift;
+        if luma <= threshold {
             raw[i] = 0;
             raw[i + 1] = 0;
             raw[i + 2] = 0;
         } else {
-            // keep white-ish, then quantize
             raw[i] = lut[raw[i] as usize];
             raw[i + 1] = lut[raw[i + 1] as usize];
             raw[i + 2] = lut[raw[i + 2] as usize];
