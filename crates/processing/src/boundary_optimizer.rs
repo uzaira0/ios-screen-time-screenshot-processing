@@ -54,17 +54,17 @@ pub fn parse_ocr_total(ocr_total: &str) -> Option<i32> {
     let mut total_minutes: i32 = 0;
 
     // Extract hours: digits followed by 'h'
-    if let Some(cap) = RE_HOURS.captures(&text) {
-        if let Ok(h) = cap[1].parse::<i32>() {
-            total_minutes += h * 60;
-        }
+    if let Some(cap) = RE_HOURS.captures(&text)
+        && let Ok(h) = cap[1].parse::<i32>()
+    {
+        total_minutes += h * 60;
     }
 
     // Extract minutes: digits followed by 'm' (not 'ms')
-    if let Some(cap) = RE_MINUTES.captures(&text) {
-        if let Ok(m) = cap[1].parse::<i32>() {
-            total_minutes += m;
-        }
+    if let Some(cap) = RE_MINUTES.captures(&text)
+        && let Ok(m) = cap[1].parse::<i32>()
+    {
+        total_minutes += m;
     }
 
     // Seconds-only → rounds to 0 minutes

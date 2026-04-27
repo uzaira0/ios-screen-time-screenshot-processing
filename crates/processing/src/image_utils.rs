@@ -315,10 +315,11 @@ pub fn get_pixel(img: &RgbImage, arg: i32) -> Option<[u8; 3]> {
         i += 3;
         // Early exit: if we've found exactly 2 colors (common after reduce_color_count(2))
         // and have counted enough pixels, the ranking is stable.
-        if let Some(start) = settled_at {
-            if table.len() == 2 && (i / 3 - start) >= settle_threshold {
-                break;
-            }
+        if let Some(start) = settled_at
+            && table.len() == 2
+            && (i / 3 - start) >= settle_threshold
+        {
+            break;
         }
     }
 
