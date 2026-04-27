@@ -379,36 +379,38 @@ export class WASMPreprocessingService implements IPreprocessingService {
     };
 
     // device_detection and cropping are I/O bound (IndexedDB reads +
-    // canvas decode), not bound by any shared worker — fire all of
-    // them at once.
-    // ocr scales with the processing-worker pool size — each LepTess
-    // worker can handle one PROCESS_IMAGE at a time, so dispatching
-    // poolSize-many concurrent jobs keeps every worker busy without
-    // queueing. PHI stages still serialize because they share a
+    // canvas decode) and cap at 32 concurrent to avoid flooding the
+    // browser's IndexedDB connection pool and crashing the tab on large
+    // batches. ocr scales with the processing-worker pool size — each
+    // LepTess worker can handle one PROCESS_IMAGE at a time, so
+    // dispatching poolSize-many concurrent jobs keeps every worker busy
+    // without queueing. PHI stages still serialize because they share a
     // single Tesseract/NER worker per browser tab.
-    const isUnboundedConcurrency =
+    const DEVICE_CROP_CONCURRENCY = 32;
+    const isBoundedConcurrency =
       stage === "device_detection" || stage === "cropping";
     const ocrConcurrency = stage === "ocr" ? this.processing.getPoolSize?.() ?? 1 : 0;
 
-    if (isUnboundedConcurrency) {
-      const settled = await Promise.allSettled(
-        eligible.map((screenshot) =>
-          this.processStage(screenshot, stage, options),
-        ),
-      );
-      const failures: Array<{ screenshot: Screenshot; reason: unknown }> = [];
-      for (let i = 0; i < settled.length; i++) {
-        const result = settled[i]!;
-        if (result.status === "fulfilled") {
-          completed++;
-        } else {
-          failures.push({ screenshot: eligible[i]!, reason: result.reason });
+    if (isBoundedConcurrency) {
+      let cursor = 0;
+      const runner = async () => {
+        for (;;) {
+          if (options.abortSignal?.aborted) return;
+          const i = cursor++;
+          if (i >= eligible.length) return;
+          const screenshot = eligible[i]!;
+          try {
+            await this.processStage(screenshot, stage, options);
+            completed++;
+          } catch (e) {
+            await recordFailure(screenshot, e);
+          }
+          options.onProgress?.(completed, eligible.length);
         }
-      }
-      for (const f of failures) {
-        await recordFailure(f.screenshot, f.reason);
-      }
-      options.onProgress?.(completed, eligible.length);
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(DEVICE_CROP_CONCURRENCY, eligible.length) }, () => runner()),
+      );
     } else if (ocrConcurrency > 1) {
       // Pool-sized concurrency for OCR. Use a cursor + N workers
       // pattern so each worker pulls the next eligible screenshot the

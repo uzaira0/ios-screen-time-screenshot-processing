@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>iOS Screen Time Screenshot Processing</title>
+        <script>
+            // GitHub Pages SPA redirect: encode the current path into a query
+            // param so index.html can restore it before React boots.
+            // pathSegmentsToKeep=1 preserves the repo-name prefix segment
+            // (e.g. /ios-screen-time-screenshot-processing).
+            var l = window.location;
+            l.replace(
+                l.protocol + "//" + l.host +
+                l.pathname.split("/").slice(0, 2).join("/") + "/?/" +
+                l.pathname.slice(1).split("/").slice(1).join("/").replace(/&/g, "~and~") +
+                (l.search ? "&" + l.search.slice(1).replace(/&/g, "~and~") : "") +
+                l.hash
+            );
+        </script>
+    </head>
+    <body></body>
+</html>

@@ -55,6 +55,14 @@ jobs:
         # No VITE_API_BASE_URL → app boots in WASM mode with zero backend calls
         run: bun run --bun vite build
 
+      - name: Inject runtime config (basePath for React Router)
+        # BrowserRouter needs the repo-name prefix so in-app navigation
+        # produces URLs the 404.html redirect can decode correctly.
+        run: |
+          REPO_NAME="${{ github.event.repository.name }}"
+          echo "window.__CONFIG__ = { basePath: \"/${REPO_NAME}\" };" > frontend/dist/config.js
+          echo "Injected basePath: /${REPO_NAME}"
+
       - name: Inject git SHA into service worker
         # The SW file has the literal string __BUILD_ID__ which browsers use
         # to detect whether the SW has changed since their last visit.

@@ -27,9 +27,6 @@
             href="/icons/icon-512.png"
         />
 
-        <!-- PWA Manifest -->
-        <link rel="manifest" href="/manifest.webmanifest" />
-
         <!-- Viewport -->
         <meta
             name="viewport"
@@ -77,10 +74,28 @@
             name="twitter:description"
             content="Extract and analyze battery and screen time usage data from iOS screenshots using AI-powered OCR. Works offline with WebAssembly processing."
         />
+        <!-- Decode GitHub Pages SPA redirect (see public/404.html).
+             Runs before React so history.replaceState restores the real path. -->
+        <script>
+            (function (l) {
+                if (l.search[1] === "/") {
+                    var decoded = l.search
+                        .slice(1)
+                        .split("&")
+                        .map(function (s) { return s.replace(/~and~/g, "&"); })
+                        .join("?");
+                    window.history.replaceState(
+                        null,
+                        null,
+                        l.pathname.slice(0, -1) + decoded + l.hash
+                    );
+                }
+            })(window.location);
+        </script>
     </head>
     <body>
         <div id="root"></div>
-        <script src="/config.js"></script>
+        <script src="./config.js"></script>
         <script type="module" src="/src/main.tsx"></script>
     </body>
 </html>
