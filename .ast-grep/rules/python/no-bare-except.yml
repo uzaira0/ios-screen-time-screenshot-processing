@@ -1,0 +1,10 @@
+id: no-bare-except
+language: Python
+rule:
+  all:
+    - kind: except_clause
+    - regex: "^except\\s*:"
+message: |
+  Bare 'except:' catches SystemExit and KeyboardInterrupt, masking crashes.
+  Use 'except Exception:' or name the specific exception type.
+severity: error

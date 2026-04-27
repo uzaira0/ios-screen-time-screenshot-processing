@@ -17,6 +17,7 @@
 #   benchmark  - Run pytest-benchmark with comparison (runs in Docker)
 #   k6         - API endpoint load profiling
 #   import     - Python import time analysis (runs in Docker)
+#   features   - Hyperfine feature benchmarks (per-stage, API, Rust) — ranked by slowness
 #
 # Output: profiling-reports/YYYY-MM-DD_HH-MM/
 #
@@ -439,6 +440,22 @@ SUMMARY
 }
 
 # =============================================================================
+# Feature-level hyperfine benchmarks
+# =============================================================================
+run_features() {
+    log_header "Feature Benchmarks (hyperfine)"
+    local out="$REPORT_DIR/features"
+    mkdir -p "$out"
+    if command -v hyperfine &>/dev/null; then
+        scripts/benchmark-features.sh --runs 5 "$out" \
+            && log_ok "Feature benchmarks → $out/summary.md" \
+            || log_warn "Feature benchmarks had issues (see $out/)"
+    else
+        log_warn "hyperfine not found — skipping (cargo install hyperfine)"
+    fi
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 main() {
@@ -462,6 +479,7 @@ main() {
             run_db
             run_benchmark
             run_k6
+            run_features
             ;;
         python)     run_python ;;
         complexity) run_complexity ;;
@@ -471,9 +489,10 @@ main() {
         benchmark)  run_benchmark ;;
         k6)         run_k6 ;;
         import)     run_import_time "$REPORT_DIR/python" ;;
+        features)   run_features ;;
         *)
             echo "Unknown category: $CATEGORY"
-            echo "Valid: all, python, complexity, frontend, rust, db, benchmark, k6, import"
+            echo "Valid: all, python, complexity, frontend, rust, db, benchmark, k6, import, features"
             exit 1
             ;;
     esac

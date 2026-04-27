@@ -6,8 +6,9 @@
 //!
 //! Run: cd frontend/src-tauri && cargo bench
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::fs;
+
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use tempfile::TempDir;
 
 /// Recreate the scan_image_files logic inline for benchmarking
@@ -112,5 +113,10 @@ fn bench_scan_combined(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_scan_by_size, bench_scan_by_mix, bench_scan_combined);
+criterion_group!(
+    benches,
+    bench_scan_by_size,
+    bench_scan_by_mix,
+    bench_scan_combined
+);
 criterion_main!(benches);

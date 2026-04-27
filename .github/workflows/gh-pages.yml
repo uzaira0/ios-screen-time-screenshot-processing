@@ -1,0 +1,83 @@
+name: GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; don't cancel an in-progress deployment.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install Linux system deps (for native crates)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libleptonica-dev libtesseract-dev
+
+      - name: Build Rust → WASM (image processing pipeline)
+        run: |
+          wasm-pack build crates/processing \
+            --target web \
+            --out-dir ../../frontend/src/processing-wasm \
+            --features wasm \
+            --no-default-features \
+            --release
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Build (WASM / offline mode)
+        working-directory: frontend
+        # No VITE_API_BASE_URL → app boots in WASM mode with zero backend calls
+        run: bun run --bun vite build
+
+      - name: Inject git SHA into service worker
+        # The SW file has the literal string __BUILD_ID__ which browsers use
+        # to detect whether the SW has changed since their last visit.
+        run: |
+          BUILD_ID=$(git rev-parse --short HEAD)
+          sed -i "s/__BUILD_ID__/${BUILD_ID}/g" frontend/dist/sw.js
+          echo "SW build ID: ${BUILD_ID}"
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

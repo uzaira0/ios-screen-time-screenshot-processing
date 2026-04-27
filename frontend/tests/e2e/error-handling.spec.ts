@@ -266,7 +266,7 @@ test.describe("Error Handling", () => {
     // This tests React Error Boundary
     await page.addInitScript(() => {
       // We can't easily crash a component, but we can check error boundary exists
-      (window as any).__testErrorBoundary = true;
+      (window as any).__testErrorBoundary = true; // ast-grep-ignore: no-as-any
     });
 
     await page.goto("annotate");

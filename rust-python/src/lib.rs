@@ -8,13 +8,11 @@
 //!     result = rs.process_image("/path/to/screenshot.png", "screen_time", "line_based")
 //!     print(result["hourly_values"])  # [0.0, 0.0, ..., 15.3, ...]
 
-use ios_screen_time_image_pipeline as processing;
-
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
 use std::collections::HashMap;
 
+use ios_screen_time_image_pipeline as processing;
 use processing::types::{DetectionMethod, ImageType};
+use pyo3::{prelude::*, types::PyDict};
 
 /// Process a screenshot with automatic grid detection.
 ///
@@ -43,20 +41,85 @@ fn process_image(
 }
 
 /// Convert a ProcessingResult to a Python dict, handling Option types.
-fn result_to_pydict(result: processing::types::ProcessingResult) -> PyResult<HashMap<String, PyObject>> {
+fn result_to_pydict(
+    result: processing::types::ProcessingResult,
+) -> PyResult<HashMap<String, PyObject>> {
     Python::with_gil(|py| {
         let mut map = HashMap::new();
-        map.insert("hourly_values".to_string(), result.hourly_values.into_pyobject(py)?.into_any().unbind());
-        map.insert("total".to_string(), result.total.into_pyobject(py)?.into_any().unbind());
-        map.insert("title".to_string(), result.title.into_pyobject(py)?.into_any().unbind());
-        map.insert("total_text".to_string(), result.total_text.into_pyobject(py)?.into_any().unbind());
-        map.insert("alignment_score".to_string(), result.alignment_score.into_pyobject(py)?.into_any().unbind());
-        map.insert("detection_method".to_string(), result.detection_method.into_pyobject(py)?.into_any().unbind());
-        map.insert("processing_time_ms".to_string(), result.processing_time_ms.into_pyobject(py)?.into_any().unbind());
-        map.insert("is_daily_total".to_string(), result.is_daily_total.into_pyobject(py)?.to_owned().into_any().unbind());
-        map.insert("has_blocking_issues".to_string(), result.has_blocking_issues.into_pyobject(py)?.to_owned().into_any().unbind());
-        map.insert("grid_detection_confidence".to_string(), result.grid_detection_confidence.into_pyobject(py)?.into_any().unbind());
-        map.insert("title_y_position".to_string(), result.title_y_position.into_pyobject(py)?.into_any().unbind());
+        map.insert(
+            "hourly_values".to_string(),
+            result.hourly_values.into_pyobject(py)?.into_any().unbind(),
+        );
+        map.insert(
+            "total".to_string(),
+            result.total.into_pyobject(py)?.into_any().unbind(),
+        );
+        map.insert(
+            "title".to_string(),
+            result.title.into_pyobject(py)?.into_any().unbind(),
+        );
+        map.insert(
+            "total_text".to_string(),
+            result.total_text.into_pyobject(py)?.into_any().unbind(),
+        );
+        map.insert(
+            "alignment_score".to_string(),
+            result
+                .alignment_score
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+        );
+        map.insert(
+            "detection_method".to_string(),
+            result
+                .detection_method
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+        );
+        map.insert(
+            "processing_time_ms".to_string(),
+            result
+                .processing_time_ms
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+        );
+        map.insert(
+            "is_daily_total".to_string(),
+            result
+                .is_daily_total
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+        );
+        map.insert(
+            "has_blocking_issues".to_string(),
+            result
+                .has_blocking_issues
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+        );
+        map.insert(
+            "grid_detection_confidence".to_string(),
+            result
+                .grid_detection_confidence
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+        );
+        map.insert(
+            "title_y_position".to_string(),
+            result
+                .title_y_position
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+        );
 
         // Convert Vec<String> issues to Python list
         let issues_list = pyo3::types::PyList::new(py, &result.issues)?;
@@ -176,7 +239,10 @@ fn ocr_extract(image_bytes: &[u8], psm: &str) -> PyResult<Vec<HashMap<String, Py
         let mut result = Vec::with_capacity(words.len());
         for w in &words {
             let mut map = HashMap::new();
-            map.insert("text".to_string(), w.text.as_str().into_pyobject(py)?.into_any().unbind());
+            map.insert(
+                "text".to_string(),
+                w.text.as_str().into_pyobject(py)?.into_any().unbind(),
+            );
             map.insert("x".to_string(), w.x.into_pyobject(py)?.into_any().unbind());
             map.insert("y".to_string(), w.y.into_pyobject(py)?.into_any().unbind());
             map.insert("w".to_string(), w.w.into_pyobject(py)?.into_any().unbind());

@@ -1,0 +1,11 @@
+id: no-useeffect-async
+language: TypeScript
+rule:
+  any:
+    - pattern: useEffect(async () => { $$$BODY }, $DEPS)
+    - pattern: useEffect(async () => { $$$BODY })
+message: |
+  Do not pass an async function directly to useEffect.
+  useEffect's return value must be a cleanup function or undefined — async functions return Promises.
+  Instead: useEffect(() => { const run = async () => { ... }; void run(); }, deps)
+severity: error

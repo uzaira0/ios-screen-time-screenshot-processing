@@ -1,11 +1,25 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
-  "entry": ["src/main.tsx", "src/config.ts"],
+  "entry": [
+    "src/main.tsx",
+    "src/config.ts",
+    "src/service-worker.ts",
+    "src/core/implementations/wasm/processing/workers/*.worker.*.ts"
+  ],
   "project": ["src/**/*.{ts,tsx}"],
-  "ignore": ["src/types/api-schema.ts", "src/_archive/**"],
+  "ignore": [
+    "src/types/api-schema.ts",
+    "src/core/generated/**",
+    "src/_archive/**"
+  ],
   "ignoreDependencies": [
     "@tauri-apps/*",
     "tailwindcss",
-    "@tailwindcss/*"
-  ]
+    "@tailwindcss/*",
+    "@playwright/test",
+    "autoprefixer"
+  ],
+  "playwright": {
+    "entry": ["tests/e2e/**/*.spec.ts", "tests/visual/**/*.spec.ts", "tests/accessibility/**/*.spec.ts"]
+  }
 }

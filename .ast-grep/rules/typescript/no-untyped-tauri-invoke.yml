@@ -1,0 +1,12 @@
+id: no-untyped-tauri-invoke
+language: TypeScript
+rule:
+  all:
+    - pattern: invoke($CMD)
+    - not:
+        pattern: invoke<$T>($CMD)
+message: |
+  Tauri invoke() must have an explicit type parameter.
+  Use: invoke<ExpectedReturnType>("command-name", args)
+  Without it, the return type is 'unknown' and errors surface at runtime instead of compile-time.
+severity: error

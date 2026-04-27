@@ -1,0 +1,30 @@
+---
+extends: default
+
+rules:
+  line-length:
+    max: 200
+    level: warning
+
+  truthy:
+    # "on"/"off" are required unquoted by GitHub Actions workflow syntax
+    allowed-values: ["true", "false", "on", "off"]
+    check-keys: true
+
+  comments:
+    require-starting-space: true
+    min-spaces-from-content: 1
+
+  document-start: disable
+
+  indentation:
+    spaces: 2
+    indent-sequences: true
+
+ignore: |
+  node_modules/
+  .venv/
+  frontend/node_modules/
+  docker/volumes/
+  **/*.lock
+  **/package-lock.json

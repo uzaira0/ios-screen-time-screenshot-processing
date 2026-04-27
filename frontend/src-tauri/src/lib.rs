@@ -1,13 +1,14 @@
-use ios_screen_time_image_pipeline as processing;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
+use ios_screen_time_image_pipeline as processing;
+use processing::types::{DetectionMethod, ImageType};
 use serde::Serialize;
-use std::fs;
-use std::path::Path;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_log::{Target, TargetKind};
-
-use processing::types::{DetectionMethod, ImageType};
 
 #[derive(Clone, serde::Serialize)]
 struct SingleInstancePayload {
@@ -19,6 +20,66 @@ struct SingleInstancePayload {
 pub struct SelectedFile {
     pub name: String,
     pub path: String,
+}
+
+/// Validate that `path_str` is a supported image file within one of the
+/// directories the user is allowed to open (mirrors the `fs:allow-read-file`
+/// capability scope).  Canonicalization resolves symlinks and `..` components
+/// before the directory comparison, preventing path-traversal attacks.
+fn validate_image_path(app: &tauri::AppHandle, path_str: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(path_str);
+
+    // Extension check first — cheap and fails fast on obviously wrong input.
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) if is_image_extension_str(ext) => {}
+        _ => {
+            return Err(
+                "Path must point to a supported image file (png/jpg/jpeg/heic/webp)".into(),
+            );
+        }
+    }
+
+    // Canonicalize resolves symlinks and removes `..` components.
+    // Fails if the file does not exist, which is the right behaviour — we
+    // never want to attempt opening a path that doesn't resolve to a real file.
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve image path: {e}"))?;
+
+    // Build the set of allowed base directories (same variables as the
+    // fs:allow-read-file capability scope in default.json).
+    let resolver = app.path();
+    let allowed: Vec<PathBuf> = [
+        resolver.picture_dir(),
+        resolver.desktop_dir(),
+        resolver.download_dir(),
+        resolver.document_dir(),
+        resolver.app_data_dir(),
+        resolver.home_dir(),
+    ]
+    .into_iter()
+    .filter_map(|r| r.ok())
+    .filter_map(|p| p.canonicalize().ok())
+    .collect();
+
+    if allowed.is_empty() {
+        // Should never happen on a supported OS, but fail safe.
+        return Err("Could not determine allowed directories for image access".into());
+    }
+
+    if !allowed.iter().any(|dir| canonical.starts_with(dir)) {
+        return Err(format!(
+            "Image path is outside allowed directories: {}",
+            canonical.display()
+        ));
+    }
+
+    Ok(canonical)
+}
+
+/// Case-insensitive extension check on a plain `&str`.
+fn is_image_extension_str(ext: &str) -> bool {
+    is_image_extension(std::ffi::OsStr::new(ext))
 }
 
 /// Opens a native folder picker and returns metadata for image files found.
@@ -44,41 +105,56 @@ async fn select_screenshot_folder(app: tauri::AppHandle) -> Result<Vec<SelectedF
 /// Returns hourly values, grid bounds, alignment score, and OCR results.
 #[tauri::command]
 async fn process_screenshot(
+    app: tauri::AppHandle,
     path: String,
     image_type: String,
     detection_method: String,
 ) -> Result<processing::ProcessingResult, String> {
+    let canonical = validate_image_path(&app, &path)?;
     let img_type = ImageType::from_str(&image_type);
     let method = DetectionMethod::from_str(&detection_method);
 
-    processing::process_image(&path, img_type, method).map_err(|e| e.to_string())
+    let canonical_str = canonical
+        .to_str()
+        .ok_or_else(|| "Image path contains non-UTF-8 characters".to_string())?;
+    processing::process_image(canonical_str, img_type, method).map_err(|e| e.to_string())
 }
 
 /// Process a screenshot with user-provided grid coordinates.
 #[tauri::command]
 async fn process_screenshot_with_grid(
+    app: tauri::AppHandle,
     path: String,
     upper_left: [i32; 2],
     lower_right: [i32; 2],
     image_type: String,
 ) -> Result<processing::ProcessingResult, String> {
+    let canonical = validate_image_path(&app, &path)?;
     let img_type = ImageType::from_str(&image_type);
 
-    processing::process_image_with_grid(&path, upper_left, lower_right, img_type)
+    let canonical_str = canonical
+        .to_str()
+        .ok_or_else(|| "Image path contains non-UTF-8 characters".to_string())?;
+    processing::process_image_with_grid(canonical_str, upper_left, lower_right, img_type)
         .map_err(|e| e.to_string())
 }
 
 /// Extract only hourly data (fast path — no OCR, no grid detection).
 #[tauri::command]
 async fn extract_hourly_data(
+    app: tauri::AppHandle,
     path: String,
     upper_left: [i32; 2],
     lower_right: [i32; 2],
     image_type: String,
 ) -> Result<Vec<f64>, String> {
+    let canonical = validate_image_path(&app, &path)?;
     let img_type = ImageType::from_str(&image_type);
 
-    processing::extract_hourly_data(&path, upper_left, lower_right, img_type)
+    let canonical_str = canonical
+        .to_str()
+        .ok_or_else(|| "Image path contains non-UTF-8 characters".to_string())?;
+    processing::extract_hourly_data(canonical_str, upper_left, lower_right, img_type)
         .map_err(|e| e.to_string())
 }
 
@@ -160,16 +236,17 @@ pub fn run() {
                 .targets([
                     Target::new(TargetKind::Stdout),
                     Target::new(TargetKind::LogDir { file_name: None }),
+                    #[cfg(debug_assertions)]
                     Target::new(TargetKind::Webview),
                 ])
                 .build(),
         )
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_os::init())
         .setup(|app| {
             #[cfg(desktop)]
-            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -184,10 +261,11 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::fs;
-    use std::path::PathBuf;
+    use std::{fs, path::PathBuf};
+
     use tempfile::TempDir;
+
+    use super::*;
 
     #[test]
     fn test_scan_image_files_finds_images() {
@@ -222,7 +300,7 @@ mod tests {
     fn test_scan_image_files_empty_directory() {
         let dir = TempDir::new().unwrap();
         let result = scan_image_files(dir.path()).unwrap();
-        assert!(result.is_empty(), "Empty directory should return no files");
+        assert!(result.is_empty(), "Empty directory should return empty vec");
     }
 
     #[test]
@@ -260,6 +338,23 @@ mod tests {
     #[test]
     fn test_scan_nonexistent_directory() {
         let result = scan_image_files(&PathBuf::from("/nonexistent/path"));
-        assert!(result.is_err(), "Should return error for nonexistent directory");
+        assert!(
+            result.is_err(),
+            "Should return error for nonexistent directory"
+        );
+    }
+
+    #[test]
+    fn test_is_image_extension_str_valid() {
+        for ext in &["png", "jpg", "jpeg", "heic", "webp", "PNG", "JPG", "JPEG"] {
+            assert!(is_image_extension_str(ext), "Should accept {ext}");
+        }
+    }
+
+    #[test]
+    fn test_is_image_extension_str_invalid() {
+        for ext in &["pdf", "txt", "exe", "sh", "json", "rs"] {
+            assert!(!is_image_extension_str(ext), "Should reject {ext}");
+        }
     }
 }

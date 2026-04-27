@@ -1,0 +1,21 @@
+[alias]
+# Run clippy across the whole workspace with warnings-as-errors (matches pre-push hook)
+lint = "clippy --workspace --all-targets -- -D warnings"
+# Build everything including test harnesses without running tests
+build-all = "build --workspace --all-targets"
+
+# Emscripten WASM target: these flags are passed to emcc during the final link step
+# when cargo builds the `pipeline_em` binary (bin targets produce a MAIN_MODULE,
+# unlike cdylib which produces a SIDE_MODULE that doesn't support MODULARIZE).
+[target.wasm32-unknown-emscripten]
+rustflags = [
+  "-C", "link-arg=-sMODULARIZE=1",
+  "-C", "link-arg=-sEXPORT_NAME=IosScreenTimePipeline",
+  "-C", "link-arg=-sEXPORTED_FUNCTIONS=[\"_pipeline_alloc\",\"_pipeline_free\",\"_pipeline_process\",\"_pipeline_detect_grid\",\"_pipeline_extract_ocr\"]",
+  "-C", "link-arg=-sEXPORTED_RUNTIME_METHODS=[\"ccall\",\"cwrap\",\"FS\",\"HEAPU8\"]",
+  "-C", "link-arg=-sALLOW_MEMORY_GROWTH=1",
+  "-C", "link-arg=-sINITIAL_MEMORY=67108864",
+  "-C", "link-arg=-sSTACK_SIZE=4194304",
+  "-C", "link-arg=-sENVIRONMENT=web",
+  "-C", "link-arg=-sSUPPORT_LONGJMP=wasm",
+]

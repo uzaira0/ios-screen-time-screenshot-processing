@@ -1,0 +1,8 @@
+id: no-todo-macro
+language: Rust
+rule:
+  pattern: todo!($$$ARGS)
+message: |
+  todo!() must not ship in production code — it panics at runtime.
+  Implement the logic, return a proper error, or remove the dead path.
+severity: warning

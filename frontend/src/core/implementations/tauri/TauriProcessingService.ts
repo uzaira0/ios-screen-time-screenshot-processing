@@ -205,21 +205,17 @@ export class TauriProcessingService implements IProcessingService {
 
     const invoke = await this.getInvoke();
 
-    try {
-      const result = await invoke("process_screenshot", {
-        path,
-        imageType,
-        detectionMethod: method ?? "line_based",
-      }) as RustProcessingResult;
+    const result = await invoke("process_screenshot", {
+      path,
+      imageType,
+      detectionMethod: method ?? "line_based",
+    }) as RustProcessingResult;
 
-      if (result.grid_bounds) {
-        return {
-          upper_left: { x: result.grid_bounds.upper_left_x, y: result.grid_bounds.upper_left_y },
-          lower_right: { x: result.grid_bounds.lower_right_x, y: result.grid_bounds.lower_right_y },
-        };
-      }
-    } catch (error) {
-      console.error("[TauriProcessingService] detectGrid failed:", error);
+    if (result.grid_bounds) {
+      return {
+        upper_left: { x: result.grid_bounds.upper_left_x, y: result.grid_bounds.upper_left_y },
+        lower_right: { x: result.grid_bounds.lower_right_x, y: result.grid_bounds.lower_right_y },
+      };
     }
 
     return null;

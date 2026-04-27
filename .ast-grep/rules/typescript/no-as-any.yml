@@ -1,0 +1,9 @@
+id: no-as-any
+language: TypeScript
+rule:
+  pattern: $X as any
+message: |
+  Avoid 'as any' — use 'as unknown' then narrow, or add a proper type.
+  Dynamic Tauri plugin imports: cast to the specific plugin module type instead.
+severity: warning
+note: 4 existing uses in lib/tauri.ts and lib/updater.ts are dynamic-import shims — fix or suppress with // ast-grep-ignore if truly necessary.

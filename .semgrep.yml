@@ -1,0 +1,177 @@
+rules:
+  # ── Python: subprocess shell=True ────────────────────────────────────────
+  - id: python-subprocess-shell-true
+    pattern: subprocess.$FUNC($CMD, shell=True, ...)
+    message: "subprocess with shell=True — use shell=False and explicit args list"
+    languages: [python]
+    severity: WARNING
+
+  # ── Python: eval/exec ────────────────────────────────────────────────────
+  - id: python-eval-exec
+    patterns:
+      - pattern: eval($X)
+      - pattern: exec($X)
+    message: "eval/exec with potentially untrusted input"
+    languages: [python]
+    severity: ERROR
+
+  # ── Python: unsafe yaml.load ─────────────────────────────────────────────
+  - id: python-yaml-load-unsafe
+    pattern: yaml.load($DATA)
+    message: "yaml.load without SafeLoader — use yaml.safe_load() or yaml.load($DATA, Loader=yaml.SafeLoader)"
+    languages: [python]
+    severity: ERROR
+
+  # ── Python: pickle/marshal on untrusted data ──────────────────────────────
+  - id: python-pickle-untrusted
+    patterns:
+      - pattern: pickle.loads($X)
+      - pattern: pickle.load($X)
+    message: "pickle.load(s) deserializes arbitrary objects — never use on untrusted input"
+    languages: [python]
+    severity: ERROR
+
+  # ── FastAPI: raw SQL via f-string ─────────────────────────────────────────
+  - id: fastapi-raw-sql
+    pattern: |
+      text(f"$SQL {$VAR}$$$")
+    message: "f-string inside SQLAlchemy text() — use :param bindings instead"
+    languages: [python]
+    severity: ERROR
+
+  # ── FastAPI: SQL string concatenation ────────────────────────────────────
+  - id: fastapi-sql-concat
+    patterns:
+      - pattern: text($X + $Y)
+      - pattern: text($X % $Y)
+    message: "String concatenation/format inside SQLAlchemy text() — use :param bindings"
+    languages: [python]
+    severity: ERROR
+
+  # ── Python: requests with verify=False ───────────────────────────────────
+  - id: python-requests-no-verify
+    pattern: requests.$METHOD($URL, ..., verify=False, ...)
+    message: "SSL verification disabled — removes MITM protection"
+    languages: [python]
+    severity: WARNING
+
+  # ── Python: ReDoS — nested quantifiers ───────────────────────────────────
+  - id: python-re-nested-quantifier
+    pattern-either:
+      - pattern: re.compile("...(.+)+...")
+      - pattern: re.compile("...(.*)+...")
+      - pattern: re.compile("...(.+)*...")
+      - pattern: re.match("...(.+)+...", ...)
+      - pattern: re.search("...(.+)+...", ...)
+      - pattern: re.findall("...(.+)+...", ...)
+    message: "Nested quantifier (e.g. (.+)+) — catastrophic backtracking risk (ReDoS, CWE-1333)"
+    languages: [python]
+    severity: WARNING
+
+  # ── TypeScript/JS: ReDoS — nested quantifiers ────────────────────────────
+  - id: js-regex-nested-quantifier
+    pattern-either:
+      - pattern: new RegExp("...(.+)+...")
+      - pattern: new RegExp("...(.*)+...")
+      - pattern: /(.+)+/
+      - pattern: /(.*)+/
+      - pattern: /(.+)*/
+    message: "Nested quantifier — catastrophic backtracking risk (ReDoS, CWE-1333)"
+    languages: [javascript, typescript]
+    severity: WARNING
+
+  # ── Rust: hardcoded secrets ───────────────────────────────────────────────
+  - id: rust-hardcoded-secret
+    patterns:
+      - pattern: 'const $NAME: &str = "...";'
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: "(SECRET|PASSWORD|TOKEN|API_KEY|PRIVATE_KEY)"
+    message: "Hardcoded secret in Rust source"
+    languages: [rust]
+    severity: ERROR
+
+  # ── TypeScript: silent .catch(() => {}) ──────────────────────────────────
+  # Swallows the rejection with no logging, no re-throw, no rationale.
+  # If the error is genuinely ignorable, put a comment inside the arrow body
+  # explaining why: `.catch(() => { /* localStorage unavailable in SSR */ })`
+  - id: silent-promise-catch-arrow-empty
+    pattern-regex: '\.catch\(\s*\(\s*\w*\s*\)\s*=>\s*(\{\s*\}|null|undefined)\s*\)'
+    message: >
+      Silent .catch() swallows the rejection with no logging or rationale.
+      Add a one-line comment explaining why if truly non-fatal:
+      `.catch(() => { /* non-fatal: OCR unavailable in this context */ })`
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - frontend/src/
+      exclude:
+        - "*.test.*"
+        - "*.spec.*"
+        - frontend/src/types/
+
+  # ── Generic: truly-empty catch block ─────────────────────────────────────
+  # An empty catch {} with not even a comment leaves no trail for debuggers.
+  # A comment inside the braces passes — the rationale IS the invariant.
+  - id: silent-empty-catch-block
+    pattern-regex: 'catch\s*(\([\w$]+\)\s*)?\{\s*\}'
+    message: >
+      Empty catch block with no body and no comment. If the error is
+      ignorable, document why: `catch (e) { /* quota exceeded in private mode */ }`
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - frontend/src/
+        - src/
+      exclude:
+        - "*.test.*"
+        - "*.spec.*"
+
+  # ── TypeScript: hand-written API types ───────────────────────────────────
+  # All types that mirror backend responses must derive from the generated
+  # OpenAPI schema (frontend/src/types/api-schema.ts), not be hand-written.
+  # Hand-written interface definitions in services/api/ or hooks/ are drift
+  # waiting to happen.
+  - id: no-hand-written-api-types
+    pattern-regex: 'export\s+interface\s+\w+(Response|Request|Read|Create|Update|List)\s*\{'
+    message: >
+      Hand-written API response/request interface — use the generated type
+      from api-schema.ts instead:
+        import type { components } from "@/types/api-schema";
+        type Foo = components["schemas"]["FooRead"];
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - frontend/src/services/
+        - frontend/src/hooks/
+        - frontend/src/store/
+        - frontend/src/components/
+      exclude:
+        - frontend/src/types/
+        - "*.test.*"
+        - "*.spec.*"
+
+  # ── Generic: port/copy/mirror comments ───────────────────────────────────
+  # "port of image_processor.py" / "mirrors Python pipeline" etc. signal
+  # that code was duplicated rather than abstracted. The canonical home for
+  # pixel-level logic is the Rust crate (crates/processing/); TypeScript
+  # canvas implementations are the WASM fallback and must stay in sync via
+  # the shared constants system, not ad-hoc duplication.
+  - id: no-ported-algorithm-comments
+    pattern-regex: '(?i)(port(ed)?\s+(of|from)\s+(image_processor|ocr|bar_extractor|grid_detect)|mirrors?\s+(python|image_processor|core|pipeline)|SOURCE:\s*/opt/|translated\s+from\s+python)'
+    message: >
+      Comment indicates this is a port/copy of Python pipeline code.
+      If the logic must exist in TypeScript for the WASM fallback path,
+      reference the shared constants system and add a contract test
+      in tests/contract/ to catch drift.
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - frontend/src/
+      exclude:
+        - "*.test.*"
+        - "*.spec.*"

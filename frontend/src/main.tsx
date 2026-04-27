@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import { ServiceProvider } from "./core";
+import { registerServiceWorker, onSWUpdate } from "./lib/serviceWorker";
 
 const rootElement = document.getElementById("root");
 
@@ -17,3 +18,14 @@ ReactDOM.createRoot(rootElement).render(
     </ServiceProvider>
   </React.StrictMode>,
 );
+
+// Register SW after render so it doesn't block first paint.
+registerServiceWorker();
+onSWUpdate(async () => {
+  const { default: toast } = await import("react-hot-toast");
+  toast("Code update ready — your data stays on device. Reload to apply.", {
+    duration: 8000,
+    id: "sw-update",
+    icon: "🔄",
+  });
+});

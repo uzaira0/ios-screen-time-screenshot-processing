@@ -1,0 +1,4 @@
+[advisories]
+# Mirrors deny.toml ignore list. Keep in sync.
+# No ignored advisories by default — add with explicit reason when needed.
+ignore = []

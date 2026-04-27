@@ -8,15 +8,13 @@
 //! - run_tesseract: Single Tesseract OCR call via leptess
 //! - darken_non_white / reduce_color_count / convert_dark_mode
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use image::RgbImage;
 use std::path::Path;
 
+use criterion::{Criterion, criterion_group, criterion_main};
+use image::RgbImage;
+
 fn load_test_image() -> Option<RgbImage> {
-    let paths = [
-        "/tmp/test-images/test1.png",
-        "/tmp/test-images/test2.png",
-    ];
+    let paths = ["/tmp/test-images/test1.png", "/tmp/test-images/test2.png"];
     for p in &paths {
         if Path::new(p).exists() {
             if let Ok(img) = image::open(p) {
@@ -111,7 +109,8 @@ fn bench_full_pipeline(c: &mut Criterion) {
             let mut work = img.clone();
             ios_screen_time_image_pipeline::image_utils::convert_dark_mode(&mut work);
 
-            let grid_result = ios_screen_time_image_pipeline::grid_detection::line_based::detect(&work);
+            let grid_result =
+                ios_screen_time_image_pipeline::grid_detection::line_based::detect(&work);
             if let Ok(ref r) = grid_result {
                 if r.success {
                     let bounds = r.bounds.unwrap();

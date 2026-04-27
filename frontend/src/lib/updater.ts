@@ -17,7 +17,7 @@ export interface UpdateProgress {
 
 export async function relaunchApp(): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { relaunch } = (await import("@tauri-apps/plugin-process")) as any;
+  const { relaunch } = (await import("@tauri-apps/plugin-process")) as any; // ast-grep-ignore: no-as-any
   await relaunch();
 }
 
@@ -40,7 +40,7 @@ interface UpdateEvent {
 
 export async function checkForUpdate(): Promise<UpdateInfo | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { check } = (await import("@tauri-apps/plugin-updater")) as any;
+  const { check } = (await import("@tauri-apps/plugin-updater")) as any; // ast-grep-ignore: no-as-any
   const update = await check();
 
   if (!update?.available) {

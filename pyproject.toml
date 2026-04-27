@@ -192,6 +192,14 @@ reportFunctionMemberAccess = "warning"  # Celery task.s() signatures
 extend_default_ignore = ["DEP003"]  # Allow transitive imports (common in monorepo)
 ignore = ["DEP002"]  # Missing deps OK (monorepo packages)
 
+[tool.bandit]
+skips = [
+    "B101",  # assert — used in tests
+    "B105",  # hardcoded password string — dev config defaults
+    "B311",  # non-cryptographic random — used for sampling/fixtures
+]
+exclude_dirs = ["tests", ".venv", "venv", "src/screenshot_processor/gui"]
+
 # NOTE: [tool.uv.sources] removed for Docker compatibility.
 # In Docker, packages are installed by path from the monorepo.
 # For local dev, use: uv sync (workspace root) or pip install -e

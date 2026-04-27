@@ -54,6 +54,70 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libleptonica-dev libtesseract-dev clang
 
+      # ── macOS: import Developer ID certificate into a temporary keychain ───
+      - name: Import macOS signing certificate
+        if: matrix.os == 'macos-latest'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_KEYCHAIN_PWD: ${{ secrets.MACOS_KEYCHAIN_PWD }}
+        run: |
+          if [[ -z "$MACOS_CERTIFICATE" ]]; then
+            if [[ "${{ github.ref_type }}" == "tag" ]]; then
+              echo "::error::MACOS_CERTIFICATE secret is required for tag releases."
+              exit 1
+            fi
+            echo "::warning::MACOS_CERTIFICATE not set — building unsigned (OK for testing, NOT for release)."
+            exit 0
+          fi
+
+          echo "$MACOS_CERTIFICATE" | base64 --decode -o certificate.p12
+          security create-keychain -p "$MACOS_KEYCHAIN_PWD" tauri-build.keychain
+          security default-keychain -s tauri-build.keychain
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PWD" tauri-build.keychain
+          security import certificate.p12 \
+            -k tauri-build.keychain \
+            -P "$MACOS_CERTIFICATE_PWD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/productsign
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s -k "$MACOS_KEYCHAIN_PWD" tauri-build.keychain
+          rm -f certificate.p12
+          echo "::notice::macOS certificate imported."
+
+      # ── Windows: import code-signing certificate into the certificate store ─
+      - name: Import Windows signing certificate
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PWD: ${{ secrets.WINDOWS_CERTIFICATE_PWD }}
+        run: |
+          if ([string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE)) {
+            if ("${{ github.ref_type }}" -eq "tag") {
+              Write-Error "WINDOWS_CERTIFICATE secret is required for tag releases."
+              exit 1
+            }
+            Write-Warning "WINDOWS_CERTIFICATE not set — building unsigned (OK for testing, NOT for release)."
+            exit 0
+          }
+
+          $certBytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          $certPath  = Join-Path $env:RUNNER_TEMP "tauri-sign.pfx"
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+
+          $securePwd = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PWD -AsPlainText -Force
+          $cert = Import-PfxCertificate `
+            -FilePath $certPath `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -Password $securePwd
+
+          # Export thumbprint so the Build step can pick it up
+          "$($cert.Thumbprint)" | Out-File -FilePath "$env:RUNNER_TEMP\cert_thumbprint.txt" -Encoding ASCII -NoNewline
+          Remove-Item $certPath -Force
+          Write-Host "::notice::Windows certificate imported. Thumbprint: $($cert.Thumbprint)"
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: bun install --frozen-lockfile
@@ -75,6 +139,19 @@ jobs:
         shell: bash
         run: find frontend/src-tauri/target -path '*/release/bundle' -type d -exec rm -rf {} + 2>/dev/null || true
 
+      - name: Read Windows certificate thumbprint
+        if: matrix.os == 'windows-latest'
+        id: win_cert
+        shell: pwsh
+        run: |
+          $thumbprintFile = Join-Path $env:RUNNER_TEMP "cert_thumbprint.txt"
+          if (Test-Path $thumbprintFile) {
+            $t = Get-Content $thumbprintFile -Raw
+            "thumbprint=$t" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            "thumbprint=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
       - name: Build Tauri
         working-directory: frontend
         run: npx @tauri-apps/cli build ${{ matrix.os == 'macos-latest' && '--target universal-apple-darwin' || '' }}
@@ -82,6 +159,18 @@ jobs:
           CI: true
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS notarization (Tauri CLI reads these automatically)
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows code signing
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ steps.win_cert.outputs.thumbprint }}
+
+      - name: Cleanup macOS keychain
+        if: matrix.os == 'macos-latest' && always()
+        run: |
+          security delete-keychain tauri-build.keychain 2>/dev/null || true
 
       - name: Upload updater artifacts
         uses: actions/upload-artifact@v4
