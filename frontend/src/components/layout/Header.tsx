@@ -35,6 +35,7 @@ export const Header = () => {
     { to: "/", label: "Groups" },
     { to: "/annotate", label: "Annotate" },
     ...(!config.isLocalMode ? [{ to: "/consensus", label: "Consensus" }] : []),
+    { to: "/export", label: "Export" },
     { to: "/settings", label: "Settings" },
     ...(features.admin && isAdmin ? [{ to: "/admin", label: "Admin" }] : []),
   ];

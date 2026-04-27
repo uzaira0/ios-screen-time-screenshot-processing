@@ -371,6 +371,7 @@ export class WASMPreprocessingService implements IPreprocessingService {
           error: reason instanceof Error ? reason.message : String(reason),
         });
         await this.storage.updateScreenshot(screenshot.id as number, {
+          processing_status: "failed",
           processing_metadata: setPreprocessing(screenshot, updated),
         });
       } catch (writeErr) {

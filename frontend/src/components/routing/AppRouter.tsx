@@ -15,6 +15,7 @@ import { LoginPage } from "@/pages/LoginPage";
 import { AnnotationPage } from "@/pages/AnnotationPage";
 import { ConsensusPage } from "@/pages/ConsensusPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { ExportPage } from "@/pages/ExportPage";
 import { UploadPage } from "@/pages/UploadPage";
 import { HelpPage } from "@/pages/HelpPage";
 
@@ -251,6 +252,16 @@ export const AppRouter: React.FC = () => {
               <Navigate to="/" replace />
             )}
           </AdminRoute>
+        }
+      />
+      <Route
+        path="/export"
+        element={
+          <ProtectedRoute>
+            <RouteBoundary>
+              <ExportPage />
+            </RouteBoundary>
+          </ProtectedRoute>
         }
       />
       <Route
