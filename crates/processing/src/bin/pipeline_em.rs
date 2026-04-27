@@ -70,13 +70,13 @@ fn ensure_tessdata_prefix() {
 
 // ── Memory management ─────────────────────────────────────────────────────────
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pipeline_alloc(len: usize) -> *mut u8 {
     let layout = alloc::Layout::from_size_align(len.max(1), 8).unwrap();
     unsafe { alloc::alloc(layout) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pipeline_free(ptr: *mut u8, len: usize) {
     if ptr.is_null() {
         return;
@@ -87,7 +87,7 @@ pub extern "C" fn pipeline_free(ptr: *mut u8, len: usize) {
 
 // ── Full pipeline (OCR + grid + bars) ────────────────────────────────────────
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pipeline_process(
     rgba_ptr: *const u8,
     rgba_len: usize,
@@ -233,7 +233,7 @@ pub extern "C" fn pipeline_process(
 ///
 /// `method`: 0 = OcrAnchored with LineBased fallback (matches canvas default),
 ///           1 = LineBased only (fast, no OCR — use for benchmarks).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pipeline_detect_grid(
     rgba_ptr: *const u8,
     rgba_len: usize,
@@ -280,7 +280,7 @@ pub extern "C" fn pipeline_detect_grid(
 /// Runs Tesseract on the full image to extract title and total usage
 /// text. Used by EXTRACT_TITLE and EXTRACT_TOTAL to skip grid detection
 /// and bar extraction when only the OCR fields are needed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pipeline_extract_ocr(
     rgba_ptr: *const u8,
     rgba_len: usize,
@@ -323,7 +323,7 @@ pub extern "C" fn pipeline_extract_ocr(
 /// Full-page OCR for PHI detection. Returns every word with bbox +
 /// confidence + character offsets so the JS side can map matches back to
 /// image coordinates. Replaces the Tesseract.js dependency.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pipeline_phi_words(
     rgba_ptr: *const u8,
     rgba_len: usize,

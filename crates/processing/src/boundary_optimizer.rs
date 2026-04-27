@@ -91,7 +91,7 @@ fn correct_ocr_7_to_1(ocr_total: &str, bar_total_minutes: i32) -> (String, i32) 
     let positions: Vec<usize> = chars
         .iter()
         .enumerate()
-        .filter(|(_, &c)| c == '7')
+        .filter(|&(_, &c)| c == '7')
         .map(|(i, _)| i)
         .collect();
 
